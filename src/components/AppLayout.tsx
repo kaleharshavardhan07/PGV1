@@ -17,24 +17,26 @@ const TENANT_OPEN_ROUTES = ['/app/tenant/admission', '/app/notifications'];
 
 export default function AppLayout({ role, title, subtitle, children }: AppLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { data, syncTenantSession } = useAppStore();
+  const { data, syncTenantSession, ready } = useAppStore();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Redirect to login if no role selected
+  // Redirect to login if no role selected (only once the session is resolved,
+  // so an authenticated user is never bounced out during the first load).
   useEffect(() => {
+    if (!ready) return;
     if (!data.activeRole) {
       navigate('/app/login');
     } else if (data.activeRole !== role) {
       navigate(`/app/${data.activeRole}`);
     }
-  }, [data.activeRole, role, navigate]);
+  }, [ready, data.activeRole, role, navigate]);
 
   // Access control: tenants without an approved, active membership may only
   // reach the admission status / notifications screens. The membership check
   // reads the platform registry (server-side equivalent), not just UI state.
   useEffect(() => {
-    if (role !== 'tenant' || !data.activeRole) return;
+    if (!ready || role !== 'tenant' || !data.activeRole) return;
     const membership = data.platform.memberships.find(
       (m) =>
         m.pgId === data.activePgId &&
@@ -51,7 +53,7 @@ export default function AppLayout({ role, title, subtitle, children }: AppLayout
     if (!isOpen) {
       navigate('/app/tenant/admission', { replace: true });
     }
-  }, [role, data.activeRole, data.platform.memberships, data.activePgId, data.activeTenantUserId, data.activeTenantId, location.pathname, navigate, syncTenantSession]);
+  }, [ready, role, data.activeRole, data.platform.memberships, data.activePgId, data.activeTenantUserId, data.activeTenantId, location.pathname, navigate, syncTenantSession]);
 
   return (
     <div className="min-h-screen bg-background-200 flex">

@@ -73,7 +73,9 @@ export const usageSummary = (
   ];
 };
 
-export const isOverLimit = (used: number, limit: number | null) => limit !== null && used >= limit;
+// True only when usage exceeds the plan limit. Being exactly at the limit is
+// allowed (every PG uses 1 branch, so `>=` would warn everyone).
+export const isOverLimit = (used: number, limit: number | null) => limit !== null && used > limit;
 
 export const nextInvoiceNumber = (invoices: SubscriptionInvoice[]): string => {
   const n = invoices.length + 1;

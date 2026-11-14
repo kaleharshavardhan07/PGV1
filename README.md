@@ -1,43 +1,97 @@
-# React + TypeScript + Vite
+# Aapka PG
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+PG & hostel management platform — React (Vite) frontend + Node.js/Express/MongoDB API.
+
+| Layer | Stack | Location |
+|---|---|---|
+| Frontend | React 19 + TypeScript + Vite + Tailwind | `src/` |
+| Backend | Node.js + Express 4 + MongoDB (Mongoose) + JWT | `server/` |
+| Design docs | — | [`server/docs/LLD.md`](server/docs/LLD.md), [`docs/FRONTEND-LLD.md`](docs/FRONTEND-LLD.md) |
 
 ## Prerequisites
 
-Use Node.js `20.19.0` or newer, or Node.js `22.12.0` or newer. The current Vite toolchain depends on Node.js APIs that are not available in Node.js `20.11.0`.
+- **Node.js 20.19+ or 22.12+** (required by the Vite 8 toolchain)
+- **MongoDB** running locally (or a connection string)
 
-After upgrading Node.js, reopen the terminal and run:
+## 1. Start the API
 
-```shell
+```bash
+cd server
 npm install
-npm run dev
+cp .env.example .env     # set MONGO_URI + a strong JWT_SECRET
+npm run seed             # load the demo PG, users and data
+npm run dev              # http://localhost:5000
 ```
 
-Currently, two official plugins are available:
+Health check: <http://localhost:5000/api/health>
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Other scripts: `npm start` (production), `npm run seed:reset` (wipe + re-seed).
 
-## React Compiler
+## 2. Start the frontend
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+# from the repository root
+npm install
+cp .env.example .env     # VITE_API_URL=http://localhost:5000
+npm run dev              # http://localhost:5173
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Demo accounts (after `npm run seed`)
+
+| Role | Login | Password / OTP |
+|---|---|---|
+| Owner | `shreeganesh_pg_4821` | `demo1234` |
+| Manager | `manager@shreeganeshpg.in` | `demo1234` |
+| Tenant | `9876500011` (Amit Kumar) | OTP `1234` |
+
+New owners can self-register at `/subscribe` (7-step onboarding with a simulated,
+signature-verified payment). New tenants register from the login page.
+
+## Deploy (single service on Render)
+
+Express serves both the API (`/api/*`) and the built SPA, so one Render Web
+Service runs everything with no CORS or base-URL configuration.
+
+| Render setting | Value |
+|---|---|
+| Build Command | `npm ci && npm ci --prefix server && npm run build` |
+| Start Command | `npm run start` |
+| Health Check Path | `/api/health` |
+
+A ready-to-use [`render.yaml`](render.yaml) blueprint is included. Full
+step-by-step instructions (MongoDB Atlas, env vars, seeding):
+[`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md).
+
+## Project layout
+
+```
+.
+├── src/                    # React frontend
+│   ├── api/                # REST client, typed endpoints, DTO adapters
+│   ├── components/         # Shared UI (layout, sidebar, modal, toast...)
+│   ├── pages/              # 24 role-based screens
+│   ├── store/              # API-backed app store (external store + hooks)
+│   ├── services/           # Pure domain helpers (billing, plans, formatting)
+│   └── types/              # Domain model
+├── server/                 # Express + MongoDB API (see server/README.md)
+├── render.yaml             # Render blueprint (single-service deploy)
+├── docs/FRONTEND-LLD.md    # Frontend architecture & integration design
+└── docs/DEPLOY-RENDER.md   # Deployment guide
+```
+
+## Scripts (root)
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Vite dev server |
+| `npm run build` | Type-check + production build |
+| `npm run preview` | Preview the production build |
+| `npm run lint` | Oxlint |
+
+## Notes
+
+- The prototype's browser-only store was replaced by an API-backed one;
+  `src/store/appStore.ts` is now a re-export shim, so the pages were untouched.
+- OTP delivery, payment gateway callbacks and WhatsApp/SMS/email delivery are
+  **simulated** and clearly labelled - each has a documented seam for a real
+  provider.

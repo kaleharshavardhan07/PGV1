@@ -42,7 +42,6 @@ export default function CheckoutPage() {
     completeRegistrationPayment,
     confirmPgUsername,
     setOwnerPasswordAndActivate,
-    ownerLogin,
   } = useAppStore();
 
   const resumeId = params.get('resume');
@@ -128,9 +127,9 @@ export default function CheckoutPage() {
     return Object.keys(e).length === 0;
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!validateForm()) return;
-    const result = startOwnerRegistration({
+    const result = await startOwnerRegistration({
       owner: { fullName: form.ownerName.trim(), mobile: form.mobile, email: form.email.trim() },
       pg: {
         pgName: form.pgName.trim(),
@@ -168,8 +167,8 @@ export default function CheckoutPage() {
       return;
     }
     // Simulated gateway round-trip → callback → backend verification
-    setTimeout(() => {
-      const result = completeRegistrationPayment(regId, outcome);
+    setTimeout(async () => {
+      const result = await completeRegistrationPayment(regId, outcome);
       setProcessing(false);
       if (!result.ok) {
         if (result.duplicate) setDuplicateNotice(result.error);
@@ -183,10 +182,10 @@ export default function CheckoutPage() {
     }, 1800);
   };
 
-  const handleConfirmUsername = () => {
+  const handleConfirmUsername = async () => {
     if (!regId) return;
     setError('');
-    const result = confirmPgUsername(regId, usernameInput);
+    const result = await confirmPgUsername(regId, usernameInput);
     if (!result.ok) {
       setError(result.error);
       if (result.suggestions) setUsernameSuggestions(result.suggestions);
@@ -219,12 +218,9 @@ export default function CheckoutPage() {
     setStep(6);
   };
 
-  const handleFinish = async () => {
-    if (!reg) return;
-    // Log the owner in with the credentials they just created
-    const loginResult = await ownerLogin(reg.pgUsername ?? confirmedUsername, password);
-    if (loginResult.ok) navigate('/app/owner');
-    else navigate('/app/login');
+  const handleFinish = () => {
+    // Activation already issued a session token, so go straight to the dashboard.
+    navigate('/app/owner');
   };
 
   const stepIndexForProgress = step;
@@ -688,7 +684,7 @@ export default function CheckoutPage() {
               {error && <div className="p-3 rounded-xl bg-error-light text-sm text-error">{error}</div>}
               <div className="text-xs text-dark-400 flex items-center gap-1.5">
                 <ShieldCheck size={13} className="text-success" />
-                Stored as a PBKDF2-SHA256 hash — never in plain text.
+                Stored as a bcrypt hash on the server — never in plain text.
               </div>
             </div>
             <div className="flex justify-between mt-8">

@@ -35,13 +35,13 @@ export default function OwnerTenantsPage() {
     (r) => r.pgId === data.activePgId && r.status === 'Pending'
   ).length;
 
-  const handleMoveOut = (id: string, name: string, mode: 'Ended' | 'Deactivated') => {
+  const handleMoveOut = async (id: string, name: string, mode: 'Ended' | 'Deactivated') => {
     const message =
       mode === 'Ended'
         ? `Move out ${name}? Their bed becomes vacant and all payment, deposit and admission records are preserved.`
         : `Deactivate ${name}'s membership? Their bed becomes vacant and all records are preserved.`;
     if (confirm(message)) {
-      const result = moveOutTenant(id, mode);
+      const result = await moveOutTenant(id, mode);
       if (result.ok) {
         toast.show(`${name}'s membership has ended. The bed is now vacant. Records preserved.`, 'info');
       } else {

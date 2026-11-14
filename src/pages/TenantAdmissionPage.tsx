@@ -113,7 +113,7 @@ export default function TenantAdmissionPage() {
     setConsent(false);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!foundPg || !user) return;
     const e: Record<string, string> = {};
     if (form.fullName.trim().length < 3) e.fullName = 'Enter your full name';
@@ -125,7 +125,7 @@ export default function TenantAdmissionPage() {
     setErrors(e);
     if (Object.keys(e).length > 0) return;
 
-    const result = submitAdmissionRequest({
+    const result = await submitAdmissionRequest({
       pgId: foundPg.id,
       tenantUserId: user.id,
       fullName: form.fullName,

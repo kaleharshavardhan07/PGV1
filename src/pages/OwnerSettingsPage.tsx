@@ -141,10 +141,8 @@ export default function OwnerSettingsPage() {
   };
 
   const handleReset = () => {
-    if (confirm('Reset all demo data back to the original seed data? This clears every change you made.')) {
-      resetData();
-      toast.show('Demo data has been reset', 'info');
-    }
+    resetData();
+    toast.show('Reloaded the latest data from the server', 'info');
   };
 
   return (
@@ -495,12 +493,13 @@ export default function OwnerSettingsPage() {
         </div>
 
         <div className="card p-6">
-          <h3 className="font-bold text-lg text-dark-900 mb-2">Demo Data</h3>
+          <h3 className="font-bold text-lg text-dark-900 mb-2">Data Refresh</h3>
           <p className="text-sm text-dark-500 mb-4">
-            All data in this prototype is stored in your browser (localStorage). Reset it to restore the original demo tenants, payments, complaints and readings.
+            All records live in MongoDB and are served by the Aapka PG API. Reload the latest state if another
+            device changed something.
           </p>
-          <button onClick={handleReset} className="btn-secondary text-error border-error/30 hover:bg-error-light">
-            <RotateCcw size={16} /> Reset Demo Data
+          <button onClick={handleReset} className="btn-secondary">
+            <RotateCcw size={16} /> Refresh Data
           </button>
         </div>
       </div>

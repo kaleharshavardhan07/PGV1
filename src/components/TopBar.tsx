@@ -15,7 +15,7 @@ interface TopBarProps {
 }
 
 export default function TopBar({ role, onMenuClick, title, subtitle }: TopBarProps) {
-  const { data, login, logout, markAllNotificationsRead, markNotificationRead, resetData } = useAppStore();
+  const { data, logout, markAllNotificationsRead, markNotificationRead, resetData } = useAppStore();
   const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -67,11 +67,6 @@ export default function TopBar({ role, onMenuClick, title, subtitle }: TopBarPro
     navigate('/');
   };
 
-  const switchRole = (target: UserRole) => {
-    login(target);
-    navigate(`/app/${target}`);
-  };
-
   return (
     <header className="bg-white border-b border-background-300 px-4 lg:px-8 py-3 flex items-center gap-3 sticky top-0 z-20">
       <button
@@ -110,21 +105,6 @@ export default function TopBar({ role, onMenuClick, title, subtitle }: TopBarPro
           {subPill.label}
         </button>
       )}
-
-      {/* Role switcher (demo) */}
-      <div className="hidden md:flex items-center bg-background-200 rounded-xl p-1 text-xs font-medium">
-        {(['tenant', 'manager', 'owner'] as UserRole[]).map((r) => (
-          <button
-            key={r}
-            onClick={() => switchRole(r)}
-            className={`px-3 py-1.5 rounded-lg capitalize transition-colors ${
-              role === r ? 'bg-white text-primary shadow-soft' : 'text-dark-500 hover:text-dark-800'
-            }`}
-          >
-            {r}
-          </button>
-        ))}
-      </div>
 
       {/* Notifications */}
       <div className="relative" ref={notifRef}>

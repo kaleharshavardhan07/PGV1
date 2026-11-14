@@ -10,7 +10,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node server/src/server.js",
+    "install:all": "npm install && npm install --prefix server",
+    "build:render": "npm ci && npm ci --prefix server && npm run build",
+    "seed": "node server/src/seed/seed.js",
+    "seed:reset": "node server/src/seed/seed.js --reset"
   },
   "dependencies": {
     "lucide-react": "^1.72.0",

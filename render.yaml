@@ -1,0 +1,41 @@
+# Render blueprint — single web service that serves both the API and the React SPA.
+#
+# What it does:
+#   build  → installs root + server deps, builds the Vite app into ./dist
+#   start  → Express serves /api/* and the static SPA from the same origin
+#
+# Required manual step: paste your MongoDB Atlas connection string into the
+# MONGO_URI environment variable in the Render dashboard (it is marked sync: false).
+
+services:
+  - type: web
+    name: aapka-pg
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: npm ci && npm ci --prefix server && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: NODE_ENV
+        value: production
+      # MongoDB Atlas connection string, e.g.
+      # mongodb+srv://USER:PASS@cluster0.xxxxx.mongodb.net/aapka_pg?retryWrites=true&w=majority
+      - key: MONGO_URI
+        sync: false
+      # Generated once by Render and kept secret.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      # Simulated tenant OTP (matches the demo credentials in the UI).
+      - key: DEMO_OTP
+        value: "1234"
+      # Same-origin deployment, so CORS is not needed. Set this to your service
+      # URL only if the API is ever called from a different origin.
+      - key: CORS_ORIGIN
+        sync: false

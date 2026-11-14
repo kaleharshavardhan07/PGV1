@@ -124,7 +124,7 @@ export default function OwnerDashboard() {
             label="Occupied Beds"
             value={occupiedBeds}
             icon={BedDouble}
-            hint={`${Math.round((occupiedBeds / totalBeds) * 100)}% occupancy`}
+            hint={totalBeds > 0 ? `${Math.round((occupiedBeds / totalBeds) * 100)}% occupancy` : 'No beds configured'}
             color="success"
           />
           <StatCard
@@ -240,7 +240,7 @@ export default function OwnerDashboard() {
                 <div className="w-full bg-gray-200 rounded-full h-3">
                   <div
                     className="bg-orange-500 h-3 rounded-full"
-                    style={{ width: `${(noticePeriodBeds / totalBeds) * 100}%` }}
+                    style={{ width: `${totalBeds > 0 ? (noticePeriodBeds / totalBeds) * 100 : 0}%` }}
                   />
                 </div>
               </div>
@@ -248,7 +248,7 @@ export default function OwnerDashboard() {
             <div className="mt-6 p-4 rounded-xl bg-primary-50">
               <div className="text-sm text-primary font-medium mb-1">Vacancy Impact</div>
               <div className="text-2xl font-bold text-primary">
-                {formatINR(vacantBeds * (totalMonthlyRent / totalBeds))}/month
+                {formatINR(totalBeds > 0 ? vacantBeds * (totalMonthlyRent / totalBeds) : 0)}/month
               </div>
               <div className="text-xs text-gray-500 mt-1">Potential monthly revenue from vacant beds</div>
             </div>

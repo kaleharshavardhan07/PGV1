@@ -17,23 +17,29 @@ import {
   EyeOff,
   Smartphone,
   UserPlus,
-  TriangleAlert,
   RotateCcw,
 } from 'lucide-react';
 import { DEMO_RESET_CODE, validatePassword } from '../services/authService';
-import { normalizeUsername } from '../services/pgPlatform';
 
-type Mode = 'choose' | 'tenant-mobile' | 'tenant-otp' | 'tenant-register' | 'owner-login' | 'owner-forgot' | 'owner-reset';
+type Mode =
+  | 'choose'
+  | 'tenant-mobile'
+  | 'tenant-otp'
+  | 'tenant-register'
+  | 'owner-login'
+  | 'owner-forgot'
+  | 'owner-reset'
+  | 'manager-login';
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const {
-    data,
     tenantLogin,
+    tenantSendOtp,
     tenantRegister,
     ownerLogin,
+    managerLogin,
     resetOwnerPassword,
-    login,
   } = useAppStore();
 
   const [mode, setMode] = useState<Mode>('choose');
@@ -55,7 +61,9 @@ export default function LoginPage() {
   const [newPassword, setNewPassword] = useState('');
   const [resetUser, setResetUser] = useState('');
 
-  const pendingRegistrations = data.platform.pendingRegistrations.filter((r) => r.status !== 'Active');
+  // manager state
+  const [managerEmail, setManagerEmail] = useState('');
+  const [managerPassword, setManagerPassword] = useState('');
 
   const back = () => {
     setMode('choose');
@@ -65,46 +73,62 @@ export default function LoginPage() {
   };
 
   // ---------- Tenant flow ----------
-  const sendOtp = (e: React.FormEvent) => {
+  const sendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!/^[6-9]\d{9}$/.test(mobile)) {
       setError('Enter a valid 10-digit mobile number');
       return;
     }
     setError('');
-    setMode('tenant-otp');
-  };
-
-  const verifyOtp = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (otp !== '1234') {
-      setError('Invalid OTP. Use demo code 1234.');
-      return;
-    }
     setLoading(true);
-    setTimeout(() => {
-      const result = tenantLogin(mobile);
-      setLoading(false);
-      if (!result.ok) {
-        setError(result.error);
+    const result = await tenantSendOtp(mobile);
+    setLoading(false);
+    if (!result.ok) {
+      // No account for this number yet → go straight to the registration form.
+      if (/no tenant account/i.test(result.error)) {
+        setNotice(`No account exists for +91 ${mobile} yet. Create one below to continue.`);
         setMode('tenant-register');
         return;
       }
-      navigate('/app/tenant');
-    }, 800);
+      setError(result.error);
+      return;
+    }
+    setNotice(result.demoOtp ? `Demo OTP sent: ${result.demoOtp}` : 'OTP sent to your mobile');
+    setMode('tenant-otp');
   };
 
-  const registerTenant = (e: React.FormEvent) => {
+  const verifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    const result = await tenantLogin(mobile, { otp });
+    setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      if (/no tenant account/i.test(result.error)) setMode('tenant-register');
+      return;
+    }
+    navigate('/app/tenant');
+  };
+
+  const registerTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     if (regName.trim().length < 3) {
       setError('Enter your full name');
+      return;
+    }
+    if (!/^[6-9]\d{9}$/.test(mobile)) {
+      setError('Enter a valid 10-digit mobile number');
       return;
     }
     if (regEmail && !/^\S+@\S+\.\S+$/.test(regEmail)) {
       setError('Enter a valid email');
       return;
     }
-    const result = tenantRegister({ fullName: regName, mobile, email: regEmail });
+    setError('');
+    setLoading(true);
+    const result = await tenantRegister({ fullName: regName.trim(), mobile, email: regEmail.trim() });
+    setLoading(false);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -126,18 +150,29 @@ export default function LoginPage() {
     navigate('/app/owner');
   };
 
+  const handleManagerLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    const result = await managerLogin(managerEmail, managerPassword);
+    setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    navigate('/app/manager');
+  };
+
   const handleForgot = (e: React.FormEvent) => {
     e.preventDefault();
-    const u = normalizeUsername(username);
-    const pg = data.platform.pgs.find((p) => p.pgUsername.toLowerCase() === u && p.isActive);
-    if (!pg) {
-      setError('No PG account found with this username');
+    if (!username.trim()) {
+      setError('Enter your PG username or owner email');
       return;
     }
     setError('');
-    setResetUser(u);
+    setResetUser(username.trim());
     setNotice(
-      `Reset code sent to your registered contact: ${pg.ownerEmail.replace(/^(.).*(@.*)$/, '$1***$2')} / ${pg.ownerMobile.replace(/^(\d{2})\d+(\d{3})$/, '$1*****$2')}. (Demo code: ${DEMO_RESET_CODE})`
+      `If an account exists for "${username.trim()}", a reset code has been sent to its registered contact. (Demo code: ${DEMO_RESET_CODE})`
     );
     setMode('owner-reset');
   };
@@ -157,8 +192,6 @@ export default function LoginPage() {
     setMode('owner-login');
   };
 
-  const demoOwner = data.platform.pgs.find((p) => p.id === 'pg-shree-ganesh');
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-background-200 to-background-300 flex items-center justify-center p-4">
       <div className="max-w-md w-full">
@@ -169,23 +202,6 @@ export default function LoginPage() {
           <h1 className="text-3xl font-bold text-dark-900">Welcome to Aapka PG</h1>
           <p className="text-dark-600 mt-2">Your PG. Your People. Everything in Control.</p>
         </div>
-
-        {pendingRegistrations.length > 0 && mode === 'choose' && (
-          <div className="mb-4 rounded-2xl border border-warning bg-warning-light p-4">
-            <div className="flex items-start gap-2">
-              <TriangleAlert size={18} className="text-warning mt-0.5 shrink-0" />
-              <div className="text-sm">
-                <div className="font-semibold text-dark-900">Finish setting up your PG</div>
-                <p className="text-dark-600 text-xs mt-0.5">
-                  {pendingRegistrations[0].pg.pgName} — your registration is at “{pendingRegistrations[0].status}”.
-                </p>
-                <a href={`/subscribe?resume=${pendingRegistrations[0].id}`} className="text-primary text-xs font-semibold hover:underline mt-1 inline-block">
-                  Resume setup →
-                </a>
-              </div>
-            </div>
-          </div>
-        )}
 
         {mode === 'choose' && (
           <div className="bg-white rounded-2xl shadow-card p-6 animate-fade-in">
@@ -220,10 +236,7 @@ export default function LoginPage() {
               </button>
 
               <button
-                onClick={() => {
-                  login('manager');
-                  navigate('/app/manager');
-                }}
+                onClick={() => setMode('manager-login')}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border border-orange-200 hover:border-orange-600 hover:bg-orange-50 transition-all text-left group"
               >
                 <div className="w-10 h-10 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors">
@@ -231,7 +244,7 @@ export default function LoginPage() {
                 </div>
                 <div>
                   <div className="font-bold text-dark-900 group-hover:text-orange-600 transition-colors">Manager</div>
-                  <div className="text-xs text-dark-500">PG staff demo access</div>
+                  <div className="text-xs text-dark-500">PG staff login</div>
                 </div>
                 <CircleCheck className="ml-auto text-gray-300 group-hover:text-success" size={20} />
               </button>
@@ -240,11 +253,53 @@ export default function LoginPage() {
             <div className="mt-6 p-4 bg-yellow-50 rounded-xl">
               <div className="text-xs text-warning font-medium mb-1">Demo credentials</div>
               <ul className="text-xs text-dark-600 space-y-1">
-                <li>Owner: <strong>{demoOwner?.pgUsername}</strong> / <strong>demo1234</strong></li>
+                <li>Owner: <strong>shreeganesh_pg_4821</strong> / <strong>demo1234</strong></li>
+                <li>Manager: <strong>manager@shreeganeshpg.in</strong> / <strong>demo1234</strong></li>
                 <li>Tenant: <strong>9876500011</strong> (Amit Kumar) · OTP <strong>1234</strong></li>
                 <li>New owner? <a href="/subscribe" className="text-primary font-semibold hover:underline">Register your PG →</a></li>
               </ul>
             </div>
+          </div>
+        )}
+
+        {/* Manager: login */}
+        {mode === 'manager-login' && (
+          <div className="bg-white rounded-2xl shadow-card p-6 animate-fade-in">
+            <button onClick={back} className="text-dark-400 hover:text-dark-700 text-sm mb-4 inline-flex items-center gap-1">
+              <ArrowLeft size={14} /> Back
+            </button>
+            <div className="flex items-center gap-2 mb-1">
+              <Shield size={20} className="text-orange-600" />
+              <h2 className="text-xl font-bold text-dark-900">Manager Login</h2>
+            </div>
+            <p className="text-dark-500 text-sm mb-5">Sign in with the staff email and password set by your PG owner.</p>
+            <form onSubmit={handleManagerLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-1">Email *</label>
+                <input
+                  type="email"
+                  value={managerEmail}
+                  onChange={(e) => setManagerEmail(e.target.value)}
+                  className="input-field"
+                  placeholder="manager@yourpg.in"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-1">Password *</label>
+                <input
+                  type="password"
+                  value={managerPassword}
+                  onChange={(e) => setManagerPassword(e.target.value)}
+                  className="input-field"
+                  placeholder="Your password"
+                />
+              </div>
+              {error && <div className="text-error text-sm">{error}</div>}
+              <button type="submit" disabled={loading} className="w-full btn-primary py-3">
+                {loading ? 'Signing in…' : 'Sign In'}
+              </button>
+            </form>
           </div>
         )}
 
@@ -273,11 +328,22 @@ export default function LoginPage() {
                 </div>
                 {error && <div className="text-error text-sm mt-2">{error}</div>}
               </div>
-              <button type="submit" className="w-full btn-primary py-3">
-                Send OTP
+              <button type="submit" disabled={loading} className="w-full btn-primary py-3">
+                {loading ? 'Checking…' : 'Send OTP'}
               </button>
             </form>
-            <p className="text-center text-xs text-dark-400 mt-5">Demo OTP: 1234 · No real SMS is sent</p>
+            <button
+              type="button"
+              onClick={() => {
+                setError('');
+                setNotice('');
+                setMode('tenant-register');
+              }}
+              className="w-full text-center text-sm text-primary font-semibold hover:underline mt-4"
+            >
+              New to Aapka PG? Create an account
+            </button>
+            <p className="text-center text-xs text-dark-400 mt-3">Demo OTP: 1234 · No real SMS is sent</p>
           </div>
         )}
 
@@ -321,22 +387,33 @@ export default function LoginPage() {
             <p className="text-dark-500 text-sm mb-5">
               Your account is free. After creating it you can search for your PG by its username and request admission.
             </p>
+            {notice && (
+              <div className="mb-4 p-3 rounded-xl bg-primary-50 text-xs text-dark-700">{notice}</div>
+            )}
             <form onSubmit={registerTenant} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-dark-700 mb-1">Full Name *</label>
                 <input value={regName} onChange={(e) => setRegName(e.target.value)} className="input-field" placeholder="Your full name" autoFocus />
               </div>
               <div>
-                <label className="block text-sm font-medium text-dark-700 mb-1">Mobile Number</label>
-                <input value={mobile} disabled className="input-field bg-background-200 text-dark-500" />
+                <label className="block text-sm font-medium text-dark-700 mb-1">Mobile Number *</label>
+                <input
+                  type="tel"
+                  value={mobile}
+                  onChange={(e) => setMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  className="input-field"
+                  placeholder="10-digit mobile number"
+                  maxLength={10}
+                />
+                <p className="text-xs text-dark-400 mt-1">You will use this number with an OTP to log in.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-dark-700 mb-1">Email</label>
                 <input value={regEmail} onChange={(e) => setRegEmail(e.target.value)} className="input-field" placeholder="name@example.com" />
               </div>
               {error && <div className="text-error text-sm">{error}</div>}
-              <button type="submit" className="w-full btn-primary py-3">
-                Create Account &amp; Find My PG
+              <button type="submit" disabled={loading} className="w-full btn-primary py-3">
+                {loading ? 'Creating account…' : 'Create Account & Find My PG'}
               </button>
             </form>
           </div>
@@ -469,7 +546,7 @@ export default function LoginPage() {
         )}
 
         <div className="mt-8 text-center text-xs text-dark-500">
-          Demo authentication · OTP and reset codes are simulated. Passwords are stored as PBKDF2 hashes, never in plain text.
+          Demo authentication · OTP and reset codes are simulated. Passwords are bcrypt-hashed on the server and never returned to the browser.
         </div>
       </div>
     </div>

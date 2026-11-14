@@ -73,10 +73,10 @@ export default function OwnerSubscriptionPage() {
     sub.trialEndsAt &&
     (new Date(sub.trialEndsAt).getTime() - Date.now()) / 86400000 <= 3;
 
-  const simulate = (action: () => void, message: string) => {
+  const simulate = (action: () => void | Promise<unknown>, message: string) => {
     setProcessing(true);
-    setTimeout(() => {
-      action();
+    setTimeout(async () => {
+      await action();
       setProcessing(false);
       setModal(null);
       setShowCycle(false);

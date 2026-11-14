@@ -94,7 +94,7 @@ export default function OwnerAdmissionsPage() {
     setAllocError('');
   };
 
-  const confirmApprove = () => {
+  const confirmApprove = async () => {
     if (!approveFor) return;
     if (!allocRoom || !allocBed) {
       setAllocError('Select a room and a vacant bed');
@@ -115,7 +115,7 @@ export default function OwnerAdmissionsPage() {
       return;
     }
     setProcessing(true);
-    const result = approveAdmissionRequest(approveFor.requestId, {
+    const result = await approveAdmissionRequest(approveFor.requestId, {
       roomId: allocRoom,
       bedId: allocBed,
       monthlyRent: rent,
@@ -132,7 +132,7 @@ export default function OwnerAdmissionsPage() {
     toast.show(`Tenant Approved Successfully! ${approveFor.fullName} has been admitted to ${data.settings.name}.`, 'success');
   };
 
-  const confirmReject = () => {
+  const confirmReject = async () => {
     if (!rejectFor) return;
     const reason = rejectReason === 'Other' ? rejectNotes.trim() : rejectReason + (rejectNotes.trim() ? ` — ${rejectNotes.trim()}` : '');
     if (!reason) {
@@ -140,7 +140,7 @@ export default function OwnerAdmissionsPage() {
       return;
     }
     setProcessing(true);
-    const result = rejectAdmissionRequest(rejectFor.requestId, reason);
+    const result = await rejectAdmissionRequest(rejectFor.requestId, reason);
     setProcessing(false);
     if (!result.ok) {
       toast.show(result.error, 'error');
