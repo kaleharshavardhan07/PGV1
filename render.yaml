@@ -14,7 +14,9 @@ services:
     plan: free
     region: singapore
     branch: main
-    buildCommand: npm ci && npm ci --prefix server && npm run build
+    # `--include=dev` is required: NODE_ENV=production makes npm omit
+    # devDependencies, but the build needs typescript, vite and @types/*.
+    buildCommand: npm ci --include=dev && npm ci --prefix server && npm run build
     startCommand: npm run start
     healthCheckPath: /api/health
     autoDeploy: true

@@ -54,7 +54,7 @@ Service runs everything with no CORS or base-URL configuration.
 
 | Render setting | Value |
 |---|---|
-| Build Command | `npm ci && npm ci --prefix server && npm run build` |
+| Build Command | `npm ci --include=dev && npm ci --prefix server && npm run build` |
 | Start Command | `npm run start` |
 | Health Check Path | `/api/health` |
 

@@ -19,7 +19,7 @@ Browser ──► https://aapka-pg.onrender.com/app/owner   → Express → dist
 | Render setting | Value |
 |---|---|
 | Runtime | Node |
-| Build Command | `npm ci && npm ci --prefix server && npm run build` |
+| Build Command | `npm ci --include=dev && npm ci --prefix server && npm run build` |
 | Start Command | `npm run start` |
 | Health Check Path | `/api/health` |
 
@@ -68,7 +68,7 @@ Make sure `render.yaml` and `server/.env` is **not** committed (it is git-ignore
 1. **New +** → **Web Service** → connect the repo.
 2. Fill in:
    - **Runtime**: `Node`
-   - **Build Command**: `npm ci && npm ci --prefix server && npm run build`
+   - **Build Command**: `npm ci --include=dev && npm ci --prefix server && npm run build`
    - **Start Command**: `npm run start`
    - **Health Check Path**: `/api/health`
 3. **Environment variables**:
@@ -157,7 +157,40 @@ Verified behaviour in this mode:
 
 ---
 
-## 7. Notes & gotchas
+## 7. Troubleshooting
+
+### `error TS2688: Cannot find type definition file for 'node'` / `'vite/client'`
+
+The build ran without devDependencies. `NODE_ENV=production` makes `npm ci`
+behave like `--omit=dev`, so `typescript`, `vite`, `@types/node` and
+`vite/client` are missing.
+
+**Fix:** use `npm ci --include=dev` in the build command (already set in
+`render.yaml`):
+
+```
+npm ci --include=dev && npm ci --prefix server && npm run build
+```
+
+`NODE_ENV=production` should still be set **as a runtime env var** — it only
+must not suppress dev deps during the build.
+
+### `Cannot connect to MongoDB` / connection timeout
+
+Atlas IP allowlist. *Network Access* → add `0.0.0.0/0`.
+
+### `EADDRINUSE`
+
+Do not set `PORT` yourself — Render injects it.
+
+### 404 on deep links (`/app/owner`)
+
+The build output (`dist/`) was missing, so Express served the "not built yet"
+page. Check the build logs for a failure.
+
+---
+
+## 8. Notes & gotchas
 
 - **Free tier sleeps** after ~15 min idle; the first request afterwards takes ~30–60 s to wake.
 - **`dist/` must exist** for the SPA to be served. If you see "The web app has not been built yet", the build step failed — check the Render build logs.
