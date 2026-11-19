@@ -45,6 +45,8 @@ npm run dev              # http://localhost:5173
 | Manager | `manager@shreeganeshpg.in` (can manage tenants, food, expenses, documents, complaints) |
 | Tenant | `9876500011` (Amit Kumar) |
 
+Create or reset a platform admin with `ADMIN_EMAIL=you@example.com npm run create-admin` (add `-- --reset-password` to reset; a strong password is generated and shown once unless `ADMIN_PASSWORD` is set).
+
 Owners register at `/register`. **Tenants and managers cannot sign themselves up**: the owner creates each account and
 shares the generated credentials.
 

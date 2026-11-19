@@ -15,7 +15,8 @@
     "install:all": "npm install && npm install --prefix server",
     "build:render": "npm ci && npm ci --prefix server && npm run build",
     "seed": "node server/src/seed/seed.js",
-    "seed:reset": "node server/src/seed/seed.js --reset"
+    "seed:reset": "node server/src/seed/seed.js --reset",
+    "create-admin": "node server/src/scripts/createAdmin.js"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

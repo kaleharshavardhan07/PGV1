@@ -118,6 +118,20 @@ register your first PG owner at `https://<your-service>.onrender.com/register`.
 
 ---
 
+## 4a. Create the platform admin
+
+Either set `ADMIN_EMAIL` and `ADMIN_PASSWORD` on Render (created on startup if missing), or run once from your machine:
+
+```bash
+cd server
+DATABASE_URL="postgresql://..." ADMIN_EMAIL=you@example.com npm run create-admin
+# add: -- --reset-password   to change an existing admin's password
+```
+
+A strong password is generated and printed once unless `ADMIN_PASSWORD` is set. Sign in at `/admin/login` and change it.
+
+---
+
 ## 4b. Email notifications (Proton, optional)
 
 Proton has no HTTP email API. Apps send through **SMTP submission**, which Proton offers on **paid plans
