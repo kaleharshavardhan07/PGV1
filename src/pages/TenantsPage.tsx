@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
-import { Plus, Search, Users, Copy, Check, KeyRound, LogOut as MoveOutIcon, Trash2, Shuffle, BellRing } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Plus, Search, Users, KeyRound, LogOut as MoveOutIcon, Trash2, Shuffle, BellRing } from 'lucide-react';
 import AppLayout from '../components/AppLayout';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import EmptyState from '../components/EmptyState';
 import DocumentPanel from '../components/DocumentPanel';
+import CredentialsCard from '../components/CredentialsCard';
 import { TenantStatusBadge, VerificationBadge } from '../components/Badge';
 import { useToast } from '../components/Toast';
 import { useAppStore } from '../store/appStore';
@@ -26,36 +28,12 @@ const emptyForm = (): TenantForm => ({
 const MOBILE = /^[6-9]\d{9}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function CredentialsCard({ credentials, heading }: { credentials: Credentials; heading: string }) {
-  const [copied, setCopied] = useState(false);
-  const text = `Aapka PG login\nMobile: ${credentials.mobile}\nPassword: ${credentials.password}`;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard unavailable (insecure context) — the values are visible to copy by hand */
-    }
-  };
-  return (
-    <div className="rounded-lg border border-success/30 bg-success-light p-4" role="status">
-      <div className="font-semibold text-success text-sm mb-2">{heading}</div>
-      <dl className="text-sm grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-        <dt className="text-dark-500">Mobile</dt><dd className="font-mono text-dark-900">{credentials.mobile}</dd>
-        <dt className="text-dark-500">Password</dt><dd className="font-mono text-dark-900 break-all select-all">{credentials.password}</dd>
-      </dl>
-      <p className="text-xs text-dark-500 mt-2">Share these with the tenant now. For security the password is not shown again — you can reset it any time.</p>
-      <button className="btn-secondary !py-1.5 mt-3" onClick={copy}>{copied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy login details</>}</button>
-    </div>
-  );
-}
-
 export default function TenantsPage({ role }: { role: 'owner' | 'manager' }) {
   const { data, addTenant, updateTenant, resetTenantPassword, markTenantNotice, moveOutTenant, reallocateBed, deleteTenant } = useAppStore();
   const toast = useToast();
   const isOwner = role === 'owner';
 
+  const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'Current' | 'Left' | 'All'>('Current');
 
@@ -91,6 +69,18 @@ export default function TenantsPage({ role }: { role: 'owner' | 'manager' }) {
 
   const vacantBeds = data.beds.filter((b) => b.status === 'vacant');
   const roomsWithVacancy = data.rooms.filter((r) => r.beds.some((b) => b.status === 'vacant'));
+
+  // Arriving from the floor plan with ?bed=<id> opens the form with that bed selected.
+  const preBed = params.get('bed');
+  useEffect(() => {
+    if (!preBed) return;
+    const bed = data.beds.find((b) => b.id === preBed && b.status === 'vacant');
+    if (bed) {
+      setForm({ ...emptyForm(), roomId: bed.roomId, bedId: bed.id, monthlyRent: bed.rent != null ? String(bed.rent) : '' });
+      setErrors({}); setFormError(''); setCreated(null); setAddOpen(true);
+    }
+    setParams({}, { replace: true });
+  }, [preBed, data.beds, setParams]);
 
   // ---------- Create ----------
   const openAdd = () => {

@@ -77,6 +77,9 @@ Make sure `render.yaml` and `server/.env` is **not** committed (it is git-ignore
 | `NODE_ENV` | `production` |
 | `NODE_VERSION` | `22.12.0` |
 | `DATABASE_URL` | your Neon connection string |
+| `PUBLIC_APP_URL` | your service URL, e.g. `https://aapka-pg.onrender.com` (links in emails) |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | optional: creates the first platform admin on startup (sign in at `/admin/login`) |
+| `SMTP_USER`, `SMTP_TOKEN`, `MAIL_FROM` | optional: Proton Mail SMTP, see below |
 | `JWT_SECRET` | a long random string (or use Render's *Generate*) |
 | `JWT_EXPIRES_IN` | `7d` |
 
@@ -112,6 +115,20 @@ A shell-set `DATABASE_URL` takes precedence over `server/.env`.
 
 Skip seeding entirely if you want a clean production database — you can then
 register your first PG owner at `https://<your-service>.onrender.com/register`.
+
+---
+
+## 4b. Email notifications (Proton, optional)
+
+Proton has no HTTP email API. Apps send through **SMTP submission**, which Proton offers on **paid plans
+with a custom domain**: in Proton, *Settings → IMAP/SMTP → SMTP tokens → Generate token* for a custom-domain
+address. Set `SMTP_USER` (that address), `SMTP_TOKEN` (the token) and `MAIL_FROM` (same address, or
+`Aapka PG <you@yourdomain>`); `SMTP_HOST` (`smtp.protonmail.ch`) and `SMTP_PORT` (`587`, STARTTLS) default
+correctly. Verify your domain's SPF/DKIM/DMARC in Proton first, or mail may land in spam.
+
+Emails sent: owner welcome on sign-up, new Find PG enquiries, and a confirmation when a manager or tenant
+account is created. Passwords are never emailed. With the variables unset the app works normally and just logs
+"mail skipped". The platform admin screen shows whether email is connected.
 
 ---
 

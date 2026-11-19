@@ -32,7 +32,7 @@ const SESSION_KEY = 'aapka-pg-session';
 
 export interface Session {
   token: string;
-  role: 'tenant' | 'manager' | 'owner';
+  role: 'tenant' | 'manager' | 'owner' | 'admin';
   pgId: string | null;
   user: Record<string, unknown>;
 }

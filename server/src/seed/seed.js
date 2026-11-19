@@ -28,7 +28,8 @@ const DEMO_PNG = Buffer.from(
 
 const TABLES = [
   'audit_logs', 'notification_logs', 'notification_prefs', 'notifications', 'food_ratings', 'meal_opt_outs',
-  'food_menu_items', 'complaints', 'meter_readings', 'documents', 'tenants', 'beds', 'rooms', 'workspace_settings', 'managers', 'pg_accounts',
+  'food_menu_items', 'complaints', 'enquiries', 'documents', 'invoices', 'expenses', 'tenants', 'beds', 'rooms',
+  'workspace_settings', 'managers', 'platform_admins', 'pg_accounts',
 ];
 
 async function seedAll() {
@@ -44,14 +45,14 @@ async function seedAll() {
 
   const makePg = async (o, settings) => {
     const pg = await one(
-      `INSERT INTO pg_accounts (pg_name, pg_username, description, address, city, state, pin_code, pg_type, owner_name, owner_email, owner_mobile, password_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-      [o.pgName, o.pgUsername, o.description, o.address, o.city, o.state, o.pinCode, o.pgType, o.ownerName, o.ownerEmail, o.ownerMobile, hash]
+      `INSERT INTO pg_accounts (pg_name, pg_username, description, address, area, city, state, pin_code, latitude, longitude, pg_type, owner_name, owner_email, owner_mobile, password_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+      [o.pgName, o.pgUsername, o.description, o.address, o.area, o.city, o.state, o.pinCode, o.latitude, o.longitude, o.pgType, o.ownerName, o.ownerEmail, o.ownerMobile, hash]
     );
     await query(
-      `INSERT INTO workspace_settings (pg_id, name, address, city, contact_email, contact_phone, owner_name, electricity_rate)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [pg.id, settings.name, settings.address, settings.city, settings.contactEmail, settings.contactPhone, settings.ownerName, settings.electricityRate]
+      `INSERT INTO workspace_settings (pg_id, name, address, city, contact_email, contact_phone, owner_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [pg.id, settings.name, settings.address, settings.city, settings.contactEmail, settings.contactPhone, settings.ownerName]
     );
     return pg.id;
   };
@@ -60,12 +61,13 @@ async function seedAll() {
   const pg2 = await makePg(seed.secondOwner, {
     name: seed.secondOwner.pgName, address: seed.secondOwner.address, city: seed.secondOwner.city,
     contactEmail: seed.secondOwner.ownerEmail, contactPhone: seed.secondOwner.ownerMobile, ownerName: seed.secondOwner.ownerName,
-    electricityRate: 9,
   });
 
-  await query('INSERT INTO managers (pg_id, full_name, email, mobile, password_hash) VALUES ($1,$2,$3,$4,$5)', [
+  await query('INSERT INTO managers (pg_id, full_name, email, mobile, password_hash, permissions) VALUES ($1,$2,$3,$4,$5,$6)', [
     pgId, seed.manager.fullName, seed.manager.email, seed.manager.mobile, hash,
+    JSON.stringify({ tenants: true, rooms: false, food: true, expenses: true, billing: false, documents: true, complaints: true, exports: false }),
   ]);
+  await query('INSERT INTO platform_admins (name, email, password_hash) VALUES ($1,$2,$3)', ['Platform Admin', 'admin@aapkapg.in', hash]);
 
   // ---------- Rooms + beds ----------
   const roomIds = new Map();
@@ -116,23 +118,40 @@ async function seedAll() {
   await addDoc('Amit Kumar', 'Photograph', 'Passport photo', 'amit.png', 'image/png', DEMO_PNG);
   await addDoc('Sneha Patil', 'ID Proof', 'PAN card', 'pan-sneha.pdf', 'application/pdf', demoPdf('PAN - Sneha Patil (demo)'));
 
-  // ---------- Electricity readings (last month published, this month draft) ----------
-  const rate = seed.settings.electricityRate;
-  const specs = [
-    ['101', 4186, 214, 232], ['102', 3021, 168, 190], ['103', 2210, 141, 128], ['104', 5544, 305, 274],
-    ['201', 1875, 122, 118], ['202', 2688, 176, 201], ['301', 4102, 251, 238],
-  ];
-  for (const [room, prev, lastUnits, curUnits] of specs) {
-    const occupants = Math.max(1, seed.tenants.filter((t) => t.room === room).length);
-    const insert = (m, previous, units, published) =>
-      query(
-        `INSERT INTO meter_readings (pg_id, room_id, month, previous_reading, current_reading, units, rate_per_unit, total_amount, occupants, per_tenant_amount, published)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [pgId, roomIds.get(room), m, previous, previous + units, units, rate, units * rate, occupants, Math.round((units * rate) / occupants), published]
-      );
-    await insert(month(1), prev, lastUnits, true);
-    await insert(month(0), prev + lastUnits, curUnits, false);
+  // ---------- Expenses ----------
+  const expense = (title, category, amount, daysAgo, status, extra = {}) =>
+    query(
+      `INSERT INTO expenses (pg_id, title, description, amount, expense_date, category, status, visible_to_tenants, proof_required, created_by_id, created_by_role)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'owner')`,
+      [pgId, title, extra.description ?? '', amount, isoDay(-daysAgo), category, status, extra.visible ?? true, extra.proof ?? false, pgId]
+    );
+  await expense('Water tank cleaning', 'Maintenance', 3500, 3, 'Pending', { description: 'Quarterly cleaning of the rooftop tank.', proof: true });
+  await expense('Common-area electricity bill', 'Utilities', 18400, 6, 'Settled', { description: 'Corridors, lift and lighting.' });
+  await expense('Kitchen groceries', 'Groceries', 26250, 9, 'Settled');
+  await expense('Wi-Fi router replacement', 'Repairs', 4800, 12, 'Pending', { description: 'Floor 2 router replaced.', proof: true });
+  await expense('Staff salaries (internal)', 'Salaries', 42000, 15, 'Settled', { visible: false });
+
+  // ---------- Invoices (records only) ----------
+  const period = month(0);
+  let n = 0;
+  for (const t of seed.tenants.slice(0, 6)) {
+    n += 1;
+    const status = n <= 2 ? 'Paid' : n === 6 ? 'Draft' : 'Issued';
+    await query(
+      `INSERT INTO invoices (pg_id, tenant_id, number, billing_period, description, amount, due_date, status, paid_on, payment_note, created_by_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        pgId, tenantIds.get(t.fullName), `INV-${new Date().getFullYear()}-${String(n).padStart(4, '0')}`, period, `Rent for ${period}`,
+        t.monthlyRent, isoDay(n === 4 ? -6 : 5), status, status === 'Paid' ? isoDay(-2) : null, status === 'Paid' ? 'Received in cash' : '', pgId,
+      ]
+    );
   }
+
+  // ---------- Enquiries from Find PG ----------
+  await query(
+    `INSERT INTO enquiries (pg_id, name, mobile, email, message) VALUES ($1,'Rahul Sharma','9123450001','rahul@example.com','Is a double-sharing bed free from next week?'), ($1,'Manish Tiwari','9123450002','','Looking for a single room near Baner.')`,
+    [pgId]
+  );
 
   // ---------- Complaints ----------
   for (const c of seed.complaints) {
@@ -167,6 +186,7 @@ async function seedAll() {
   logger.info(`  Owner   : username ${seed.owner.pgUsername}  (or ${seed.owner.ownerEmail})`);
   logger.info(`  Manager : ${seed.manager.email}`);
   logger.info(`  Tenant  : mobile ${seed.tenants[0].mobile} (Amit Kumar)`);
+  logger.info('  Admin   : admin@aapkapg.in');
 }
 
 connectDB()

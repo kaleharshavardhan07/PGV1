@@ -5,7 +5,8 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
-  Zap,
+  Wallet,
+  Receipt,
   MessageSquare,
   Users,
   BedDouble,
@@ -23,7 +24,8 @@ import type { NotificationCategory, NotificationChannel } from '../types';
 
 const CATEGORIES: Array<NotificationCategory | 'All'> = [
   'All',
-  'Electricity',
+  'Expense',
+  'Invoice',
   'Complaint',
   'Tenant',
   'Bed',
@@ -31,7 +33,8 @@ const CATEGORIES: Array<NotificationCategory | 'All'> = [
 ];
 
 const categoryIcon: Record<NotificationCategory, React.FC<{ size?: number }>> = {
-  Electricity: Zap,
+  Expense: Wallet,
+  Invoice: Receipt,
   Complaint: MessageSquare,
   Tenant: Users,
   Bed: BedDouble,

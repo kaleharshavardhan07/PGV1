@@ -1,6 +1,7 @@
 import ApiError from '../utils/apiError.js';
 import { verifyToken } from '../services/tokenService.js';
-import { getOwner, getManager } from '../repositories/accounts.js';
+import { getOwner, getManager, getAdmin, getPgAccess } from '../repositories/accounts.js';
+import { resolvePermissions } from '../services/access.js';
 import { getTenantById } from '../repositories/tenants.js';
 
 /** Extract a Bearer token from the Authorization header. */
@@ -17,23 +18,40 @@ export const loadPrincipal = async (payload) => {
   const { sub, role } = payload;
   if (!sub || !role) throw ApiError.unauthorized('Malformed token');
 
+  if (role === 'admin') {
+    const doc = await getAdmin(sub);
+    if (!doc) throw ApiError.unauthorized('Account no longer exists');
+    return { id: doc.id, role, pgId: null, doc, features: {}, permissions: {} };
+  }
+
+  let doc;
+  let pgId;
+  let extra = {};
   if (role === 'owner') {
-    const doc = await getOwner(sub);
-    if (!doc || !doc.isActive) throw ApiError.unauthorized('Account no longer exists');
-    return { id: doc.id, role, pgId: doc.id, doc };
+    doc = await getOwner(sub);
+    pgId = doc?.id;
+  } else if (role === 'manager') {
+    doc = await getManager(sub);
+    pgId = doc?.pgId;
+    if (doc && !doc.isActive) throw ApiError.unauthorized('This manager account has been deactivated');
+  } else if (role === 'tenant') {
+    doc = await getTenantById(sub);
+    pgId = doc?.pgId;
+    if (doc?.status === 'Left') throw ApiError.unauthorized('This account has been deactivated');
+    extra = { tenantId: doc?.id };
+  } else {
+    throw ApiError.unauthorized('Unknown role in token');
   }
-  if (role === 'manager') {
-    const doc = await getManager(sub);
-    if (!doc) throw ApiError.unauthorized('Account no longer exists');
-    return { id: doc.id, role, pgId: doc.pgId, doc };
-  }
-  if (role === 'tenant') {
-    const doc = await getTenantById(sub);
-    if (!doc) throw ApiError.unauthorized('Account no longer exists');
-    if (doc.status === 'Left') throw ApiError.unauthorized('This account has been deactivated');
-    return { id: doc.id, role, pgId: doc.pgId, tenantId: doc.id, doc };
-  }
-  throw ApiError.unauthorized('Unknown role in token');
+  if (!doc) throw ApiError.unauthorized('Account no longer exists');
+
+  // The PG itself may have been suspended by the platform admin.
+  const access = await getPgAccess(pgId);
+  if (!access?.isActive) throw ApiError.unauthorized('This PG account is deactivated');
+
+  return {
+    id: doc.id, role, pgId, doc, features: access.features,
+    permissions: resolvePermissions(role, doc.permissions), ...extra,
+  };
 };
 
 /**

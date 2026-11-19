@@ -19,7 +19,7 @@ PG & hostel management — React (Vite) frontend + Node.js/Express API on Postgr
 cd server
 npm install
 cp .env.example .env     # set DATABASE_URL (Neon) + a strong JWT_SECRET
-npm run seed             # creates the tables and loads demo data
+npm run seed             # creates/upgrades the tables and loads demo data
 npm run dev              # http://localhost:5000  (on macOS set PORT=5001: AirPlay uses 5000)
 ```
 
@@ -36,24 +36,31 @@ cp .env.example .env     # VITE_API_URL=http://localhost:5000
 npm run dev              # http://localhost:5173
 ```
 
-## Demo accounts (after `npm run seed`) — password `demo1234`
+## Demo accounts (after `npm run seed`): password `demo1234`
 
 | Role | Login |
 |---|---|
+| Platform admin | `admin@aapkapg.in` at `/admin/login` |
 | Owner | `shreeganesh_pg_4821` |
-| Manager | `manager@shreeganeshpg.in` |
+| Manager | `manager@shreeganeshpg.in` (can manage tenants, food, expenses, documents, complaints) |
 | Tenant | `9876500011` (Amit Kumar) |
 
-Owners register at `/register` (one form, no payment). **Tenants cannot sign themselves up**: the owner creates
-each tenant account (Tenants → Add tenant) and shares the generated mobile + password.
+Owners register at `/register`. **Tenants and managers cannot sign themselves up**: the owner creates each account and
+shares the generated credentials.
 
 ## Features
 
-- **Rooms & beds** — owners add, edit and delete rooms and beds; occupancy is derived from tenants, so it can't drift.
-- **Tenant accounts** — created and managed by the owner/manager; mobile + password login (no OTP); reset passwords any time.
-- **Documents** — upload ID proofs, agreements and photos per tenant (PDF/JPG/PNG/WebP, ≤ 5 MB), stored in the database.
-- Electricity readings and shares, complaints, food menu and notifications.
-- No payment flow: there is no rent ledger, gateway, subscription or checkout.
+- **Rooms & beds**: add/edit/delete rooms and beds, **bulk room creation** with a review step, a **visual floor plan**
+  (vacant / occupied / notice / unavailable) with tenant allocation, safe deletes (occupied rooms/beds are protected).
+- **Roles & permissions** enforced by the API: owner, manager (owner-granted permissions), tenant (own data only), platform admin.
+- **Admin panel**: allow or block modules per PG (food, rooms, expenses, documents, billing, complaints, exports); owners switch
+  within that. Disabled modules disappear from the UI and return 403 on direct API calls.
+- **Documents**: PDF/JPG/PNG/WebP ≤ 5 MB, attached to tenants, expenses or invoices; tenants upload receipts where asked.
+- **Expenses** (replaces electricity) and **invoices**: record-keeping only, with receipts. There is no online payment.
+- **Food menu** management for owners/managers; tenants view, opt out and rate.
+- **Find PG**: location search (area/city/near me), filters (gender, sharing, price, availability, distance), contact owner
+  (call, WhatsApp, saved enquiry), detail page with map and packages. Owners pick their location on a map.
+- **Export** to CSV / Excel. **Email** via Proton SMTP (optional).
 
 ## Deploy (single service on Render)
 

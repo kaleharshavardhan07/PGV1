@@ -13,6 +13,13 @@ export const upsertMenu = asyncHandler(async (req, res) => {
   res.json({ success: true, item });
 });
 
+export const deleteMenu = asyncHandler(async (req, res) => {
+  const item = await ops.deleteMenu(req.pgId, req.params.id);
+  if (!item) throw ApiError.notFound('Menu entry not found');
+  recordAudit(req.pgId, req.user.id, 'menu.deleted', 'FoodMenuItem', item.id, `${item.day} ${item.mealType} menu removed`);
+  res.json({ success: true, message: 'Menu entry removed' });
+});
+
 export const myOptOuts = asyncHandler(async (req, res) => {
   res.json({ success: true, optOuts: await ops.listOptOuts(req.pgId, req.tenantId) });
 });

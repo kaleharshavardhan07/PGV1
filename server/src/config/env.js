@@ -16,6 +16,18 @@ const env = {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
+  publicAppUrl: (process.env.PUBLIC_APP_URL || 'http://localhost:5173').replace(/\/$/, ''),
+  // Proton Mail SMTP submission: user = custom-domain address, token = SMTP token from Proton settings.
+  smtp: {
+    host: process.env.SMTP_HOST || 'smtp.protonmail.ch',
+    port: Number(process.env.SMTP_PORT) || 587,
+    user: process.env.SMTP_USER || '',
+    token: process.env.SMTP_TOKEN || '',
+    from: process.env.MAIL_FROM || process.env.SMTP_USER || '',
+  },
+  // Optional bootstrap of the first platform admin (created only if it does not exist yet).
+  adminEmail: (process.env.ADMIN_EMAIL || '').toLowerCase(),
+  adminPassword: process.env.ADMIN_PASSWORD || '',
 };
 
 if (nodeEnv === 'production' && env.jwtSecret === 'dev-only-insecure-secret') {

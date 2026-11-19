@@ -3,10 +3,10 @@ import ApiError from '../utils/apiError.js';
 
 // Bed occupancy is derived from tenants.bed_id, never stored on the bed.
 const BED_SELECT = `
-  SELECT b.id, b.pg_id, b.room_id, b.bed_number, b.label, b.rent, b.vacant_since,
-         CASE WHEN t.id IS NULL THEN 'vacant'
-              WHEN t.status = 'Notice Period' THEN 'notice'
-              ELSE 'occupied' END AS status,
+  SELECT b.id, b.pg_id, b.room_id, b.bed_number, b.label, b.rent, b.vacant_since, b.unavailable,
+         CASE WHEN t.id IS NOT NULL THEN (CASE WHEN t.status = 'Notice Period' THEN 'notice' ELSE 'occupied' END)
+              WHEN b.unavailable THEN 'unavailable'
+              ELSE 'vacant' END AS status,
          t.id AS tenant_id, t.full_name AS tenant_name
     FROM beds b
     LEFT JOIN tenants t ON t.bed_id = b.id`;
@@ -29,7 +29,9 @@ const withBeds = (rooms, beds) =>
     return {
       ...r,
       totalBeds: roomBeds.length,
-      occupiedBeds: roomBeds.filter((b) => b.status !== 'vacant').length,
+      occupiedBeds: roomBeds.filter((b) => b.status === 'occupied' || b.status === 'notice').length,
+      unavailableBeds: roomBeds.filter((b) => b.status === 'unavailable').length,
+      vacantBeds: roomBeds.filter((b) => b.status === 'vacant').length,
       beds: roomBeds,
     };
   });
@@ -61,6 +63,30 @@ export const createRoom = (pgId, { roomNumber, floor, sharingType, attachedBathr
       await query('INSERT INTO beds (pg_id, room_id, bed_number, rent) VALUES ($1,$2,$3,$4)', [pgId, room.id, n, bedRent ?? null], tx);
     }
     return room.id;
+  });
+
+/**
+ * Create many rooms (each with its beds) atomically. If any room number already
+ * exists nothing is created and the clashing numbers are reported.
+ */
+export const createRoomsBulk = (pgId, rooms) =>
+  transaction(async (tx) => {
+    const numbers = rooms.map((r) => r.roomNumber);
+    const clashes = (await query('SELECT room_number FROM rooms WHERE pg_id = $1 AND room_number = ANY($2::text[])', [pgId, numbers], tx)).map((r) => r.roomNumber);
+    if (clashes.length) throw ApiError.conflict(`These room numbers already exist: ${clashes.join(', ')}`);
+    const ids = [];
+    for (const r of rooms) {
+      const room = await one(
+        'INSERT INTO rooms (pg_id, room_number, floor, sharing_type, attached_bathroom) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+        [pgId, r.roomNumber, r.floor, r.sharingType, r.attachedBathroom],
+        tx
+      );
+      ids.push(room.id);
+      for (let n = 1; n <= r.bedCount; n++) {
+        await query('INSERT INTO beds (pg_id, room_id, bed_number, rent) VALUES ($1,$2,$3,$4)', [pgId, room.id, n, r.bedRent ?? null], tx);
+      }
+    }
+    return ids;
   });
 
 export const updateRoom = async (pgId, id, patch) => {
@@ -100,7 +126,13 @@ export const addBed = async (pgId, roomId, { bedNumber, label, rent }) => {
 };
 
 export const updateBed = async (pgId, id, patch) => {
-  const map = { bedNumber: 'bed_number', label: 'label', rent: 'rent' };
+  if (patch.unavailable === true) {
+    const bed = await getBed(pgId, id);
+    if (bed && (bed.status === 'occupied' || bed.status === 'notice')) {
+      throw ApiError.conflict(`Bed ${bed.bedNumber} is occupied by ${bed.tenantName}. Move the tenant out or reallocate them before marking it unavailable.`);
+    }
+  }
+  const map = { bedNumber: 'bed_number', label: 'label', rent: 'rent', unavailable: 'unavailable' };
   const sets = [];
   const params = [id, pgId];
   for (const [k, col] of Object.entries(map)) {
@@ -116,7 +148,7 @@ export const updateBed = async (pgId, id, patch) => {
 export const deleteBed = async (pgId, id) => {
   const bed = await getBed(pgId, id);
   if (!bed) throw ApiError.notFound('Bed not found');
-  if (bed.status !== 'vacant') throw ApiError.conflict(`Bed ${bed.bedNumber} is occupied by ${bed.tenantName}. Move the tenant out or reallocate them first.`);
+  if (bed.status === 'occupied' || bed.status === 'notice') throw ApiError.conflict(`Bed ${bed.bedNumber} is occupied by ${bed.tenantName}. Move the tenant out or reallocate them first.`);
   await query('DELETE FROM beds WHERE id = $1 AND pg_id = $2', [id, pgId]);
   return bed;
 };
@@ -125,8 +157,13 @@ export const vacancyCounts = async (pgId) => {
   const row = await one(
     `SELECT (SELECT count(*) FROM rooms WHERE pg_id = $1) AS rooms,
             (SELECT count(*) FROM beds  WHERE pg_id = $1) AS beds,
-            (SELECT count(*) FROM tenants WHERE pg_id = $1 AND bed_id IS NOT NULL) AS occupied`,
+            (SELECT count(*) FROM tenants WHERE pg_id = $1 AND bed_id IS NOT NULL) AS occupied,
+            (SELECT count(*) FROM beds b WHERE b.pg_id = $1 AND b.unavailable
+               AND NOT EXISTS (SELECT 1 FROM tenants t WHERE t.bed_id = b.id)) AS unavailable`,
     [pgId]
   );
-  return { totalRooms: row.rooms, totalBeds: row.beds, occupiedBeds: row.occupied, vacantBeds: row.beds - row.occupied };
+  return {
+    totalRooms: row.rooms, totalBeds: row.beds, occupiedBeds: row.occupied, unavailableBeds: row.unavailable,
+    vacantBeds: row.beds - row.occupied - row.unavailable,
+  };
 };

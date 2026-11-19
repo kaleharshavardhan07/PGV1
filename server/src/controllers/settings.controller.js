@@ -3,6 +3,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import * as accounts from '../repositories/accounts.js';
 import * as tenants from '../repositories/tenants.js';
 import * as notifications from '../repositories/notifications.js';
+import { resolvePermissions } from '../services/access.js';
 import { recordAudit } from '../services/auditService.js';
 
 export const getSettings = asyncHandler(async (req, res) => {
@@ -11,19 +12,26 @@ export const getSettings = asyncHandler(async (req, res) => {
     accounts.getOwner(req.pgId),
     req.user.role === 'tenant' ? [] : notifications.listAllPrefs(req.pgId),
   ]);
+  const state = accounts.featureState(owner);
   res.json({
     success: true,
     ...config,
-    visibility: { isDiscoverable: owner.isDiscoverable, showAvailableBeds: owner.showAvailableBeds, pgUsername: owner.pgUsername },
+    visibility: {
+      isDiscoverable: owner.isDiscoverable, showAvailableBeds: owner.showAvailableBeds, contactPublic: owner.contactPublic, pgUsername: owner.pgUsername,
+    },
+    location: {
+      address: owner.address, area: owner.area, city: owner.city, state: owner.state, pinCode: owner.pinCode,
+      latitude: owner.latitude, longitude: owner.longitude,
+    },
+    // `allowed` is controlled by the platform admin, `enabled` by the owner.
+    features: state,
     notificationPrefs,
   });
 });
 
 export const updateSettings = asyncHandler(async (req, res) => {
-  const { isDiscoverable, showAvailableBeds, ...patch } = req.body;
-  if (isDiscoverable !== undefined || showAvailableBeds !== undefined) {
-    await accounts.updateVisibility(req.pgId, { isDiscoverable, showAvailableBeds });
-  }
+  const { isDiscoverable, showAvailableBeds, contactPublic, description, pgType, location, featuresEnabled, ...patch } = req.body;
+  await accounts.updateOwnerProfile(req.pgId, { isDiscoverable, showAvailableBeds, contactPublic, description, pgType, location, featuresEnabled });
   const config = await accounts.updateSettings(req.pgId, patch);
   recordAudit(req.pgId, req.user.id, 'settings.updated', 'Settings', req.pgId, 'Updated PG settings');
   res.json({ success: true, settings: config.settings });

@@ -20,6 +20,12 @@ export const createRoom = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, room });
 });
 
+export const createRoomsBulk = asyncHandler(async (req, res) => {
+  const ids = await rooms.createRoomsBulk(req.pgId, req.body.rooms);
+  recordAudit(req.pgId, req.user.id, 'room.bulk_created', 'Room', ids[0], `Created ${ids.length} rooms in bulk`);
+  res.status(201).json({ success: true, created: ids.length });
+});
+
 export const updateRoom = asyncHandler(async (req, res) => {
   const room = await rooms.updateRoom(req.pgId, req.params.id, req.body);
   if (!room) throw ApiError.notFound('Room not found');

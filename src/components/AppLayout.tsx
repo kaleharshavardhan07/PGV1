@@ -26,9 +26,13 @@ export default function AppLayout({ role, title, subtitle, actions, children }: 
     if (!data.activeRole) {
       navigate('/app/login', { replace: true });
     } else if (data.activeRole !== role) {
-      // Keep the user on the equivalent page of their own area (e.g. a notification link).
-      const mapped = location.pathname.replace(`/app/${role}`, `/app/${data.activeRole}`);
-      navigate(mapped !== location.pathname ? mapped : `/app/${data.activeRole}`, { replace: true });
+      // Owners and managers share screens, so a notification link for one lands on the other's equivalent
+      // page. Anything else (owner-only pages, tenant pages) goes to the user's own home.
+      const staff = (r: string) => r === 'owner' || r === 'manager';
+      const page = location.pathname.split('/')[3];
+      const shared = ['rooms', 'tenants', 'documents', 'expenses', 'invoices', 'food', 'complaints', 'exports'];
+      const canMap = staff(role) && staff(data.activeRole) && shared.includes(page);
+      navigate(canMap ? `/app/${data.activeRole}/${page}` : `/app/${data.activeRole}`, { replace: true });
     }
   }, [ready, data.activeRole, role, navigate, location.pathname]);
 

@@ -61,27 +61,6 @@ async function run(pgId) {
     });
   }
 
-  // ---------- C. Published electricity readings (last 2 months) → tenants in the room ----------
-  const published = await query(
-    `SELECT m.id AS reading_id, m.month, m.per_tenant_amount, r.room_number, t.id AS tenant_id, t.full_name
-       FROM meter_readings m
-       JOIN rooms r ON r.id = m.room_id
-       JOIN beds b ON b.room_id = r.id
-       JOIN tenants t ON t.bed_id = b.id AND t.status <> 'Left'
-      WHERE m.pg_id = $1 AND m.published AND m.recorded_at >= now() - interval '60 days'`,
-    [pgId]
-  );
-  for (const p of published) {
-    drafts.push({
-      dedupeKey: `elec-published-${p.readingId}-${p.tenantId}`,
-      category: 'Electricity', userRole: 'tenant', userId: p.tenantId, tenantId: p.tenantId, audience: 'tenant',
-      recipientName: p.fullName,
-      title: 'Electricity Bill Published',
-      message: `Hi ${p.fullName.split(' ')[0]}, the ${p.month} electricity bill for Room ${p.roomNumber} is out. Your share is ₹${inr(p.perTenantAmount)}.`,
-      type: 'info', link: '/app/tenant/electricity',
-    });
-  }
-
   // ---------- Materialise ----------
   let emitted = 0;
   for (const draft of drafts) {

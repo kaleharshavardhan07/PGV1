@@ -14,7 +14,18 @@ const app = express();
 // Render (and most PaaS) terminate TLS at a proxy in front of the app.
 if (env.nodeEnv === 'production') app.set('trust proxy', 1);
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        // Leaflet tiles + Nominatim geocoding for the location picker / Find PG map.
+        'img-src': ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org', 'https://*.tile.openstreetmap.org'],
+        'connect-src': ["'self'", 'https://nominatim.openstreetmap.org'],
+      },
+    },
+  })
+);
 app.use(
   cors({
     origin: env.corsOrigin.length === 1 && env.corsOrigin[0] === '*' ? true : env.corsOrigin,

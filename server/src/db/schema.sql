@@ -244,3 +244,99 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   ts        timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS audit_pg_idx ON audit_logs(pg_id, ts DESC);
+
+-- =====================================================================
+-- v2: roles & permissions, feature toggles, location, expenses, invoices,
+--     enquiries, document links. Idempotent upgrade of an existing database.
+-- =====================================================================
+
+-- Electricity is replaced by general expenses.
+DROP TABLE IF EXISTS meter_readings;
+ALTER TABLE workspace_settings DROP COLUMN IF EXISTS electricity_rate;
+
+CREATE TABLE IF NOT EXISTS platform_admins (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          text NOT NULL,
+  email         text NOT NULL UNIQUE,
+  password_hash text NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE pg_accounts
+  ADD COLUMN IF NOT EXISTS area             text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS latitude         double precision CHECK (latitude  BETWEEN -90  AND 90),
+  ADD COLUMN IF NOT EXISTS longitude        double precision CHECK (longitude BETWEEN -180 AND 180),
+  ADD COLUMN IF NOT EXISTS contact_public   boolean NOT NULL DEFAULT true,
+  -- features_allowed is set by the platform admin; features_enabled by the owner.
+  -- A feature is usable only when both are true. Missing keys default to true.
+  ADD COLUMN IF NOT EXISTS features_allowed jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS features_enabled jsonb NOT NULL DEFAULT '{}'::jsonb;
+CREATE INDEX IF NOT EXISTS pg_accounts_city_idx ON pg_accounts (lower(city));
+
+ALTER TABLE managers
+  ADD COLUMN IF NOT EXISTS permissions jsonb   NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS is_active   boolean NOT NULL DEFAULT true;
+
+ALTER TABLE beds ADD COLUMN IF NOT EXISTS unavailable boolean NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  pg_id              uuid NOT NULL REFERENCES pg_accounts(id) ON DELETE CASCADE,
+  title              text NOT NULL,
+  description        text NOT NULL DEFAULT '',
+  amount             numeric(12,2) NOT NULL CHECK (amount >= 0),
+  expense_date       date NOT NULL,
+  category           text NOT NULL CHECK (category IN ('Maintenance','Utilities','Groceries','Cleaning','Repairs','Salaries','Supplies','Other')),
+  status             text NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending','Settled')),
+  visible_to_tenants boolean NOT NULL DEFAULT true,
+  proof_required     boolean NOT NULL DEFAULT false,
+  created_by_id      text NOT NULL,
+  created_by_role    text NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS expenses_pg_idx ON expenses(pg_id, expense_date DESC);
+
+-- Invoices are records only: there is no online payment. Staff mark them paid manually.
+CREATE TABLE IF NOT EXISTS invoices (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  pg_id          uuid NOT NULL REFERENCES pg_accounts(id) ON DELETE CASCADE,
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  number         text NOT NULL,
+  billing_period text NOT NULL CHECK (billing_period ~ '^\d{4}-\d{2}$'),
+  description    text NOT NULL DEFAULT '',
+  amount         numeric(12,2) NOT NULL CHECK (amount >= 0),
+  due_date       date NOT NULL,
+  status         text NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft','Issued','Paid','Cancelled')),
+  paid_on        date,
+  payment_note   text NOT NULL DEFAULT '',
+  created_by_id  text NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (pg_id, number)
+);
+CREATE INDEX IF NOT EXISTS invoices_pg_idx ON invoices(pg_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS invoices_tenant_idx ON invoices(tenant_id);
+
+CREATE TABLE IF NOT EXISTS enquiries (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  pg_id      uuid NOT NULL REFERENCES pg_accounts(id) ON DELETE CASCADE,
+  name       text NOT NULL,
+  mobile     text NOT NULL,
+  email      text NOT NULL DEFAULT '',
+  message    text NOT NULL DEFAULT '',
+  status     text NOT NULL DEFAULT 'New' CHECK (status IN ('New','Contacted','Closed')),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS enquiries_pg_idx ON enquiries(pg_id, created_at DESC);
+
+-- Documents can now belong to a tenant, an expense, an invoice, or just the PG.
+ALTER TABLE documents ALTER COLUMN tenant_id DROP NOT NULL;
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS expense_id uuid REFERENCES expenses(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS invoice_id uuid REFERENCES invoices(id) ON DELETE CASCADE;
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_type_check;
+ALTER TABLE documents ADD CONSTRAINT documents_type_check
+  CHECK (type IN ('ID Proof','Photograph','Rental Agreement','Police Verification','Receipt','Invoice','Other'));
+CREATE INDEX IF NOT EXISTS documents_expense_idx ON documents(expense_id) WHERE expense_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS documents_invoice_idx ON documents(invoice_id) WHERE invoice_id IS NOT NULL;

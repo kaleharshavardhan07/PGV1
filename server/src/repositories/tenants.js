@@ -32,8 +32,9 @@ export const findLiveByMobile = (mobile) =>
 /** Claim a vacant bed (row-locked) and create the tenant account in one transaction. */
 export const createTenant = (pgId, data, { passwordHash, createdBy }) =>
   transaction(async (tx) => {
-    const bed = await one('SELECT id FROM beds WHERE id = $1 AND pg_id = $2 FOR UPDATE', [data.bedId, pgId], tx);
+    const bed = await one('SELECT id, unavailable FROM beds WHERE id = $1 AND pg_id = $2 FOR UPDATE', [data.bedId, pgId], tx);
     if (!bed) throw ApiError.badRequest('Selected bed does not exist');
+    if (bed.unavailable) throw ApiError.badRequest('This bed is marked unavailable');
     if (await one('SELECT 1 AS x FROM tenants WHERE bed_id = $1', [bed.id], tx)) {
       throw ApiError.conflict('This bed is already occupied');
     }
@@ -98,8 +99,9 @@ export const reallocate = (pgId, id, bedId) =>
     const t = await one('SELECT id, bed_id, status FROM tenants WHERE id = $1 AND pg_id = $2 FOR UPDATE', [id, pgId], tx);
     if (!t) throw ApiError.notFound('Tenant not found');
     if (t.status === 'Left') throw ApiError.badRequest('This tenant has already moved out');
-    const bed = await one('SELECT id FROM beds WHERE id = $1 AND pg_id = $2 FOR UPDATE', [bedId, pgId], tx);
+    const bed = await one('SELECT id, unavailable FROM beds WHERE id = $1 AND pg_id = $2 FOR UPDATE', [bedId, pgId], tx);
     if (!bed) throw ApiError.badRequest('Selected bed does not exist');
+    if (bed.unavailable) throw ApiError.badRequest('This bed is marked unavailable');
     if (t.bedId === bed.id) return t;
     if (await one('SELECT 1 AS x FROM tenants WHERE bed_id = $1', [bed.id], tx)) throw ApiError.conflict('This bed is already occupied');
     if (t.bedId) await query('UPDATE beds SET vacant_since = CURRENT_DATE WHERE id = $1', [t.bedId], tx);

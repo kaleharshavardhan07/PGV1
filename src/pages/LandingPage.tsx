@@ -1,11 +1,11 @@
 import { Link } from 'react-router-dom';
-import { Building2, DoorOpen, Users, FileText, Zap, MessageSquare, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Building2, DoorOpen, Users, FileText, Receipt, MessageSquare, ArrowRight, ShieldCheck } from 'lucide-react';
 
 const features = [
   { icon: DoorOpen, title: 'Rooms & beds', text: 'Add rooms, add or remove beds, and see exactly what is vacant at a glance.' },
   { icon: Users, title: 'Tenant accounts', text: 'Create a login for each tenant in seconds. No self sign-up, no OTPs — you stay in control.' },
   { icon: FileText, title: 'Document storage', text: 'Keep ID proofs, agreements and photos safely attached to the right tenant.' },
-  { icon: Zap, title: 'Electricity sharing', text: 'Record meter readings and let tenants see their transparent share.' },
+  { icon: Receipt, title: 'Expenses & invoices', text: 'Post expenses, share receipts, and keep clear billing records for every tenant.' },
   { icon: MessageSquare, title: 'Complaints', text: 'Tenants raise issues, your team tracks them to resolution.' },
   { icon: ShieldCheck, title: 'Private by design', text: 'Every PG is fully isolated. Tenants only ever see their own records.' },
 ];
@@ -20,7 +20,7 @@ export default function LandingPage() {
           <span className="w-8 h-8 rounded-lg bg-primary text-white flex items-center justify-center"><Building2 size={17} /></span> Aapka PG
         </Link>
         <nav className="flex items-center gap-2">
-          <Link to="/vacancy" className="btn-ghost hidden sm:inline-flex">Find a PG</Link>
+          <Link to="/find-pg" className="btn-ghost hidden sm:inline-flex">Find a PG</Link>
           <Link to="/app/login" className="btn-secondary">Log in</Link>
           <Link to="/register" className="btn-primary hidden sm:inline-flex">Register your PG</Link>
         </nav>
@@ -32,7 +32,7 @@ export default function LandingPage() {
         <p className="mt-5 text-lg text-dark-500 max-w-2xl mx-auto">Manage rooms, beds, tenants and their documents from one clean dashboard — and give every tenant their own login.</p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link to="/register" className="btn-primary !px-6 !py-3">Get started free <ArrowRight size={16} /></Link>
-          <Link to="/app/login" className="btn-secondary !px-6 !py-3">I’m a tenant</Link>
+          <Link to="/find-pg" className="btn-secondary !px-6 !py-3">Find a PG</Link>
         </div>
       </section>
 
@@ -53,7 +53,7 @@ export default function LandingPage() {
 
       <footer className="max-w-6xl mx-auto px-5 py-8 text-sm text-dark-400 flex flex-wrap justify-between gap-2">
         <span>© {YEAR} Aapka PG</span>
-        <span className="flex gap-4"><Link to="/vacancy" className="hover:text-dark-700">Vacancies</Link><Link to="/app/login" className="hover:text-dark-700">Log in</Link></span>
+        <span className="flex gap-4"><Link to="/find-pg" className="hover:text-dark-700">Find a PG</Link><Link to="/app/login" className="hover:text-dark-700">Log in</Link></span>
       </footer>
     </div>
   );

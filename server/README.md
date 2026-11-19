@@ -1,8 +1,8 @@
 # Aapka PG — Backend API
 
 Node.js + Express + **PostgreSQL (Neon)** REST API for **Aapka PG**, a PG & hostel management app:
-rooms & beds, owner-created tenant accounts, tenant documents, electricity readings, complaints,
-food menu and notifications. Design: [`docs/LLD.md`](docs/LLD.md).
+rooms & beds (bulk + floor plan), owner-created tenant accounts and managers with permissions, documents,
+expenses, invoices, food menu, exports, Find PG search/contact, feature toggles and a platform admin. Design: [`docs/LLD.md`](docs/LLD.md).
 
 ## Stack
 
@@ -26,10 +26,11 @@ Health check: `GET /api/health`.
 Create a project at <https://neon.tech>, copy the **pooled** connection string into `DATABASE_URL`
 (keep `?sslmode=require`). Tables are created on start from `src/db/schema.sql`.
 
-## Demo credentials (after seeding) — password `demo1234`
+## Demo credentials (after seeding): password `demo1234`
 
 | Role | Login |
 |---|---|
+| Platform admin | `admin@aapkapg.in` |
 | Owner | `shreeganesh_pg_4821` (or `owner@shreeganeshpg.in`) |
 | Manager | `manager@shreeganeshpg.in` |
 | Tenant | mobile `9876500011` (Amit Kumar) |
@@ -44,6 +45,9 @@ Create a project at <https://neon.tech>, copy the **pooled** connection string i
 | `JWT_SECRET` | dev fallback | **Required in production** |
 | `JWT_EXPIRES_IN` | `7d` | Token lifetime |
 | `CORS_ORIGIN` | `http://localhost:5173` | Comma-separated allowed origins |
+| `PUBLIC_APP_URL` | `http://localhost:5173` | Used for links in emails |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | unset | Creates the first platform admin on start (if missing) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_TOKEN`, `MAIL_FROM` | Proton defaults | Optional email via Proton SMTP |
 
 ## Layout
 

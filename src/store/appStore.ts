@@ -7,23 +7,32 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { errorMessage, sessionStore, type Session } from '../api/client';
 import * as ep from '../api/endpoints';
 import type {
-  Bed, Complaint, DashboardSummary, FoodMenuItem, FoodRating, MealOptOut, MeterReading, Notification,
-  NotificationLogEntry, NotificationPrefs, PGSettings, PGVisibility, ReminderSchedule, Room, Tenant, TenantDocument,
+  Bed, Complaint, DashboardSummary, Enquiry, Expense, FeatureMap, FoodMenuItem, FoodRating, Invoice, Manager, MealOptOut,
+  Notification, NotificationLogEntry, NotificationPrefs, PGLocation, PGSettings, PGVisibility, PermissionMap, ReminderSchedule,
+  Room, Tenant, TenantDocument, TenantSummary,
 } from '../types';
 
 export interface AppDataState {
-  activeRole: 'tenant' | 'manager' | 'owner' | null;
+  activeRole: 'tenant' | 'manager' | 'owner' | 'admin' | null;
   activePgId: string;
   activeTenantId: string;
   settings: PGSettings;
   visibility: PGVisibility;
   reminderSchedule: ReminderSchedule;
-  summary: DashboardSummary | null;
+  location: PGLocation;
+  /** `allowed` is set by the platform admin, `enabled` by the owner, `effective` is what the PG can use. */
+  featureState: { allowed: FeatureMap; enabled: FeatureMap; effective: FeatureMap };
+  features: FeatureMap;
+  permissions: PermissionMap;
+  summary: DashboardSummary | TenantSummary | null;
+  expenses: Expense[];
+  invoices: Invoice[];
+  managers: Manager[];
+  enquiries: Enquiry[];
   rooms: Room[];
   beds: Bed[]; // flattened from rooms
   tenants: Tenant[];
   documents: TenantDocument[];
-  meterReadings: MeterReading[];
   complaints: Complaint[];
   foodMenu: FoodMenuItem[];
   foodRatings: FoodRating[];
@@ -43,22 +52,33 @@ interface StoreState {
   error: string | null;
 }
 
+const allOn = <T extends string>(keys: readonly T[], value: boolean) => Object.fromEntries(keys.map((k) => [k, value])) as Record<T, boolean>;
+const FEATURE_KEYS = ['rooms', 'food', 'expenses', 'documents', 'billing', 'complaints', 'exports'] as const;
+const PERMISSION_KEYS = ['tenants', 'rooms', 'food', 'expenses', 'billing', 'documents', 'complaints', 'exports'] as const;
+
 const emptyData = (): AppDataState => ({
   activeRole: null,
   activePgId: '',
   activeTenantId: '',
   settings: {
-    name: '', address: '', city: '', contactEmail: '', contactPhone: '', electricityRate: 0,
+    name: '', address: '', city: '', contactEmail: '', contactPhone: '',
     ownerName: '', timezone: 'Asia/Kolkata', channels: { whatsapp: true, sms: true, email: true },
   },
-  visibility: { isDiscoverable: true, showAvailableBeds: true, pgUsername: '' },
+  visibility: { isDiscoverable: true, showAvailableBeds: true, contactPublic: true, pgUsername: '' },
+  location: { address: '', area: '', city: '', state: '', pinCode: '', latitude: null, longitude: null },
+  featureState: { allowed: allOn(FEATURE_KEYS, true), enabled: allOn(FEATURE_KEYS, true), effective: allOn(FEATURE_KEYS, true) },
+  features: allOn(FEATURE_KEYS, true),
+  permissions: allOn(PERMISSION_KEYS, false),
+  expenses: [],
+  invoices: [],
+  managers: [],
+  enquiries: [],
   reminderSchedule: { complaintUnresolvedHours: 48, retryAttempts: 2 },
   summary: null,
   rooms: [],
   beds: [],
   tenants: [],
   documents: [],
-  meterReadings: [],
   complaints: [],
   foodMenu: [],
   foodRatings: [],
@@ -96,47 +116,78 @@ export async function refresh() {
   setState({ loading: true, session });
   try {
     const role = session.role;
-    const ctx = await ep.authApi.context();
-    const staff = role !== 'tenant';
-
-    const [rooms, settings, notifs, complaints, meter, menu, ratings, docs] = await Promise.allSettled([
-      ep.roomApi.list(), ep.settingsApi.get(), ep.notificationApi.list(), ep.complaintApi.list(),
-      ep.meterApi.list(), ep.foodApi.menu(), ep.foodApi.ratings(), ep.documentApi.list(),
-    ]);
-
     const data = emptyData();
     data.activeRole = role;
-    data.activePgId = ctx.pgId;
+
+    // The platform admin has no PG workspace; the admin screens load their own data.
+    if (role === 'admin') {
+      setState({ data, session, loading: false, ready: true, error: null });
+      return;
+    }
+
+    const ctx = await ep.authApi.context();
+    const staff = role !== 'tenant';
+    data.activePgId = ctx.pgId ?? '';
     data.activeTenantId = ctx.tenant?.id ?? '';
+    data.features = { ...allOn(FEATURE_KEYS, true), ...ctx.features } as FeatureMap;
+    data.permissions = { ...allOn(PERMISSION_KEYS, false), ...ctx.permissions } as PermissionMap;
+    const on = (f: keyof FeatureMap) => data.features[f];
+    const may = (p: keyof PermissionMap) => (role === 'tenant' ? false : data.permissions[p]);
+    const skip = <T,>(v: T) => Promise.resolve(v);
+
+    const [rooms, settings, notifs, summary, complaints, menu, ratings, docs, expenses, invoices] = await Promise.allSettled([
+      ep.roomApi.list(),
+      ep.settingsApi.get(),
+      ep.notificationApi.list(),
+      ep.dashboardApi.summary(),
+      on('complaints') && (role === 'tenant' || may('complaints')) ? ep.complaintApi.list() : skip({ complaints: [] as Complaint[] }),
+      on('food') ? ep.foodApi.menu() : skip({ menu: [] as FoodMenuItem[] }),
+      on('food') ? ep.foodApi.ratings() : skip({ ratings: [] as FoodRating[] }),
+      ep.documentApi.list(),
+      on('expenses') && (role === 'tenant' || may('expenses')) ? ep.expenseApi.list() : skip({ expenses: [] as Expense[] }),
+      on('billing') && (role === 'tenant' || may('billing')) ? ep.invoiceApi.list() : skip({ invoices: [] as Invoice[] }),
+    ]);
+
     data.rooms = pick(rooms, { rooms: [] }).rooms;
     data.beds = data.rooms.flatMap((r) => r.beds);
     data.notifications = pick(notifs, { notifications: [], unread: 0 }).notifications;
+    data.summary = pick(summary, undefined as { summary: DashboardSummary | TenantSummary } | undefined)?.summary ?? null;
     data.complaints = pick(complaints, { complaints: [] }).complaints;
-    data.meterReadings = pick(meter, { readings: [] }).readings;
     data.foodMenu = pick(menu, { menu: [] }).menu;
     data.foodRatings = pick(ratings, { ratings: [] }).ratings;
     data.documents = pick(docs, { documents: [] }).documents;
+    data.expenses = pick(expenses, { expenses: [] }).expenses;
+    data.invoices = pick(invoices, { invoices: [] }).invoices;
 
     const cfg = pick(settings, undefined as Awaited<ReturnType<typeof ep.settingsApi.get>> | undefined);
     if (cfg) {
       data.settings = cfg.settings;
       data.reminderSchedule = cfg.reminderSchedule;
       data.visibility = cfg.visibility;
+      data.location = cfg.location;
+      data.featureState = cfg.features;
       data.notificationPrefs = cfg.notificationPrefs;
     } else {
       data.settings.name = ctx.pgName;
     }
 
     if (staff) {
-      const [tenants, log, summary] = await Promise.allSettled([
-        ep.tenantApi.list(), ep.notificationApi.log(), ep.dashboardApi.summary(),
+      const [tenants, log, managers, enquiries] = await Promise.allSettled([
+        may('tenants') ? ep.tenantApi.list() : skip({ tenants: [] as Tenant[] }),
+        ep.notificationApi.log(),
+        role === 'owner' ? ep.managerApi.list() : skip({ managers: [] as Manager[] }),
+        role === 'owner' ? ep.enquiryApi.list() : skip({ enquiries: [] as Enquiry[] }),
       ]);
       data.tenants = pick(tenants, { tenants: [] }).tenants;
       data.notificationLog = pick(log, { log: [] }).log;
-      data.summary = pick(summary, undefined as { summary: DashboardSummary } | undefined)?.summary ?? null;
+      data.managers = pick(managers, { managers: [] }).managers;
+      data.enquiries = pick(enquiries, { enquiries: [] }).enquiries;
     } else {
       data.tenants = ctx.tenant ? [ctx.tenant] : [];
-      const [optOuts, prefs] = await Promise.allSettled([ep.foodApi.optOuts(), ep.notificationApi.prefs()]);
+      const [optOuts, prefs] = await Promise.allSettled([
+        on('food') ? ep.foodApi.optOuts() : skip({ optOuts: [] as MealOptOut[] }),
+        ep.notificationApi.prefs(),
+      ]);
       data.mealOptOuts = pick(optOuts, { optOuts: [] }).optOuts;
       const mine = pick(prefs, undefined as Awaited<ReturnType<typeof ep.notificationApi.prefs>> | undefined)?.prefs;
       if (mine && ctx.tenant) data.notificationPrefs = [{ tenantId: ctx.tenant.id, ...mine }];
@@ -192,6 +243,7 @@ const actions = {
   ownerLogin: (identifier: string, password: string) => login(() => ep.authApi.ownerLogin(identifier.trim(), password)),
   managerLogin: (email: string, password: string) => login(() => ep.authApi.managerLogin(email.trim(), password)),
   tenantLogin: (mobile: string, password: string) => login(() => ep.authApi.tenantLogin(mobile.trim(), password)),
+  adminLogin: (email: string, password: string) => login(() => ep.authApi.adminLogin(email.trim(), password)),
   ownerRegister: (payload: Record<string, unknown>) => login(() => ep.authApi.ownerRegister(payload)),
   changePassword: async (current: string, next: string): Promise<Result> => {
     try {
@@ -204,11 +256,33 @@ const actions = {
 
   // ---------- Rooms & beds ----------
   addRoom: (body: Record<string, unknown>) => mutate(() => ep.roomApi.create(body)),
+  addRoomsBulk: (rooms: Record<string, unknown>[]) => mutate(() => ep.roomApi.bulk(rooms)),
   updateRoom: (id: string, body: Record<string, unknown>) => mutate(() => ep.roomApi.update(id, body)),
   deleteRoom: (id: string) => mutate(() => ep.roomApi.remove(id)),
   addBed: (roomId: string, body: Record<string, unknown>) => mutate(() => ep.roomApi.addBed(roomId, body)),
   updateBed: (id: string, body: Record<string, unknown>) => mutate(() => ep.roomApi.updateBed(id, body)),
   deleteBed: (id: string) => mutate(() => ep.roomApi.removeBed(id)),
+
+  // ---------- Managers (owner) ----------
+  addManager: (body: Record<string, unknown>) => mutate(() => ep.managerApi.create(body)),
+  updateManager: (id: string, body: Record<string, unknown>) => mutate(() => ep.managerApi.update(id, body)),
+  resetManagerPassword: (id: string, password?: string) => mutate(() => ep.managerApi.resetPassword(id, password)),
+  deleteManager: (id: string) => mutate(() => ep.managerApi.remove(id)),
+
+  // ---------- Expenses ----------
+  addExpense: (body: Record<string, unknown>) => mutate(() => ep.expenseApi.create(body)),
+  updateExpense: (id: string, body: Record<string, unknown>) => mutate(() => ep.expenseApi.update(id, body)),
+  deleteExpense: (id: string) => mutate(() => ep.expenseApi.remove(id)),
+
+  // ---------- Invoices ----------
+  addInvoices: (body: Record<string, unknown>) => mutate(() => ep.invoiceApi.create(body)),
+  updateInvoice: (id: string, body: Record<string, unknown>) => mutate(() => ep.invoiceApi.update(id, body)),
+  invoiceAction: (id: string, action: 'issue' | 'mark-paid' | 'reopen' | 'cancel', body: Record<string, unknown> = {}) =>
+    mutate(() => ep.invoiceApi.action(id, action, body)),
+  deleteInvoice: (id: string) => mutate(() => ep.invoiceApi.remove(id)),
+
+  // ---------- Enquiries ----------
+  updateEnquiry: (id: string, status: string) => mutate(() => ep.enquiryApi.update(id, status)),
 
   // ---------- Tenants ----------
   addTenant: (body: Record<string, unknown>) => mutate(() => ep.tenantApi.create(body)),
@@ -233,18 +307,6 @@ const actions = {
     }
   },
 
-  // ---------- Meter ----------
-  saveMeterReading: (payload: {
-    roomId: string; month: string; previousReading: number; currentReading: number; ratePerUnit?: number; occupants?: number;
-  }) =>
-    mutate(() =>
-      ep.meterApi.save({
-        room: payload.roomId, month: payload.month, previousReading: payload.previousReading,
-        currentReading: payload.currentReading, ratePerUnit: payload.ratePerUnit, occupants: payload.occupants,
-      })
-    ),
-  publishBills: (month: string) => mutate(() => ep.meterApi.publish(month)),
-
   // ---------- Complaints ----------
   addComplaint: (payload: { category: Complaint['category']; description: string }) => mutate(() => ep.complaintApi.create(payload)),
   updateComplaintStatus: (id: string, status: Complaint['status'], remarks?: string) =>
@@ -258,6 +320,7 @@ const actions = {
   },
   rateMeal: (date: string, mealType: MealOptOut['mealType'], rating: number) => mutate(() => ep.foodApi.rate(date, mealType, rating)),
   saveMenuItem: (body: Record<string, unknown>) => mutate(() => ep.foodApi.upsertMenu(body)),
+  deleteMenuItem: (id: string) => mutate(() => ep.foodApi.removeMenu(id)),
 
   // ---------- Notifications ----------
   markNotificationRead: (id: string) => mutate(() => ep.notificationApi.markRead(id)),

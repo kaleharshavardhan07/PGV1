@@ -35,6 +35,21 @@ services:
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 7d
+      # Public URL of this service: used for links inside emails.
+      - key: PUBLIC_APP_URL
+        sync: false
+      # Optional: first platform admin, created on startup if missing.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Optional: Proton Mail SMTP for owner emails (see docs/DEPLOY-RENDER.md). Skipped when unset.
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_TOKEN
+        sync: false
+      - key: MAIL_FROM
+        sync: false
       # Same-origin deployment, so CORS is not needed. Set this to your service
       # URL only if the API is ever called from a different origin.
       - key: CORS_ORIGIN

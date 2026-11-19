@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Building2, Users, UserCog } from 'lucide-react';
+import { Eye, EyeOff, Building2, Users, UserCog, ShieldCheck } from 'lucide-react';
 import AuthShell from '../components/AuthShell';
 import { useAppStore } from '../store/appStore';
 
-type Tab = 'tenant' | 'owner' | 'manager';
+type Tab = 'tenant' | 'owner' | 'manager' | 'admin';
 
 const tabs: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: 'tenant', label: 'Tenant', icon: Users },
@@ -16,12 +16,13 @@ const copy: Record<Tab, { id: string; label: string; placeholder: string; type: 
   tenant: { id: 'mobile', label: 'Mobile number', placeholder: '10-digit mobile number', type: 'tel', inputMode: 'numeric' },
   owner: { id: 'identifier', label: 'PG username or email', placeholder: 'e.g. shreeganesh_pg', type: 'text' },
   manager: { id: 'email', label: 'Email', placeholder: 'you@example.com', type: 'email', inputMode: 'email' },
+  admin: { id: 'admin-email', label: 'Admin email', placeholder: 'admin@example.com', type: 'email', inputMode: 'email' },
 };
 
-export default function LoginPage() {
-  const { data, ready, ownerLogin, managerLogin, tenantLogin } = useAppStore();
+export default function LoginPage({ adminMode = false }: { adminMode?: boolean }) {
+  const { data, ready, ownerLogin, managerLogin, tenantLogin, adminLogin } = useAppStore();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>('tenant');
+  const [tab, setTab] = useState<Tab>(adminMode ? 'admin' : 'tenant');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
@@ -44,7 +45,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setBusy(true);
-    const res = tab === 'owner' ? await ownerLogin(identifier, password) : tab === 'manager' ? await managerLogin(identifier, password) : await tenantLogin(identifier, password);
+    const res = tab === 'owner' ? await ownerLogin(identifier, password) : tab === 'manager' ? await managerLogin(identifier, password) : tab === 'admin' ? await adminLogin(identifier, password) : await tenantLogin(identifier, password);
     setBusy(false);
     if (!res.ok) setError(res.error);
   };
@@ -52,8 +53,8 @@ export default function LoginPage() {
   const f = copy[tab];
 
   return (
-    <AuthShell title="Welcome back" subtitle="Log in to your Aapka PG account">
-      <div className="flex rounded-lg bg-dark-100 p-1 mb-6" role="tablist" aria-label="Account type">
+    <AuthShell title={adminMode ? 'Platform admin' : 'Welcome back'} subtitle={adminMode ? 'Sign in to manage PGs and features' : 'Log in to your Aapka PG account'}>
+      {!adminMode && <div className="flex rounded-lg bg-dark-100 p-1 mb-6" role="tablist" aria-label="Account type">
         {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -65,7 +66,7 @@ export default function LoginPage() {
             <Icon size={15} /> {label}
           </button>
         ))}
-      </div>
+      </div>}
 
       <form onSubmit={submit} className="space-y-4" noValidate>
         <div>
@@ -90,10 +91,13 @@ export default function LoginPage() {
           <>Tenant accounts are created by your PG owner. Ask them for your mobile number and password.</>
         ) : tab === 'owner' ? (
           <>New to Aapka PG? <Link to="/register" className="text-primary font-medium hover:underline">Register your PG</Link></>
-        ) : (
+        ) : tab === 'manager' ? (
           <>Manager accounts are set up by the PG owner.</>
+        ) : (
+          <><ShieldCheck size={14} className="inline -mt-0.5 mr-1" />Admin accounts are managed by the platform team.</>
         )}
       </p>
+      {!adminMode && <p className="text-xs text-dark-400 text-center mt-3"><Link to="/admin/login" className="hover:text-dark-600">Platform admin sign-in</Link></p>}
     </AuthShell>
   );
 }

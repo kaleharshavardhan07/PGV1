@@ -5,6 +5,8 @@ import * as accounts from '../repositories/accounts.js';
 import { hashPassword, generatePassword } from '../utils/password.js';
 import { runNotificationEngine } from '../services/notificationEngine.js';
 import { recordAudit } from '../services/auditService.js';
+import { mail } from '../services/mailService.js';
+import { getOwner } from '../repositories/accounts.js';
 
 const mustGet = async (pgId, id) => {
   const tenant = await tenants.getTenant(pgId, id);
@@ -33,6 +35,7 @@ export const createTenant = asyncHandler(async (req, res) => {
   const tenant = await tenants.getTenant(req.pgId, id);
   recordAudit(req.pgId, req.user.id, 'tenant.created', 'Tenant', id, `Created account for ${tenant.fullName} in Room ${tenant.roomNumber}`);
   await runNotificationEngine(req.pgId);
+  getOwner(req.pgId).then((o) => mail.accountCreated(o.ownerEmail, 'Tenant', tenant.fullName, o.pgName)).catch(() => {});
   res.status(201).json({ success: true, tenant, credentials: { mobile: tenant.mobile, password: temporaryPassword } });
 });
 

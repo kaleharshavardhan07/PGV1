@@ -3,22 +3,25 @@ import { Link, useNavigate } from 'react-router-dom';
 import AuthShell from '../components/AuthShell';
 import { useAppStore } from '../store/appStore';
 import { authApi } from '../api/endpoints';
+import LocationPicker, { type LocationValue } from '../components/LocationPicker';
 import type { PGType } from '../types';
 
 interface Form {
   fullName: string; mobile: string; email: string;
-  pgName: string; pgType: PGType; address: string; city: string; state: string; pinCode: string;
+  pgName: string; pgType: PGType;
   pgUsername: string; password: string;
 }
 
-const initial: Form = { fullName: '', mobile: '', email: '', pgName: '', pgType: 'Co-living', address: '', city: '', state: '', pinCode: '', pgUsername: '', password: '' };
+const initial: Form = { fullName: '', mobile: '', email: '', pgName: '', pgType: 'Co-living', pgUsername: '', password: '' };
+const initialLoc: LocationValue = { address: '', area: '', city: '', state: '', pinCode: '', latitude: null, longitude: null };
 
 /** Owner sign-up: one form, no payment step. Creates the PG account and signs the owner in. */
 export default function RegisterPage() {
   const { ownerRegister, data, ready } = useAppStore();
   const navigate = useNavigate();
   const [form, setForm] = useState<Form>(initial);
-  const [errors, setErrors] = useState<Partial<Record<keyof Form, string>>>({});
+  const [loc, setLoc] = useState<LocationValue>(initialLoc);
+  const [errors, setErrors] = useState<Partial<Record<string, string>>>({});
   const [formError, setFormError] = useState('');
   const [busy, setBusy] = useState(false);
   const [username, setUsername] = useState<{ state: 'idle' | 'checking' | 'ok' | 'bad'; message?: string; suggestions?: string[] }>({ state: 'idle' });
@@ -50,29 +53,35 @@ export default function RegisterPage() {
   }, [usernameValue]);
 
   const validate = () => {
-    const e: Partial<Record<keyof Form, string>> = {};
+    const e: Record<string, string> = {};
     if (form.fullName.trim().length < 2) e.fullName = 'Enter your full name';
     if (!/^[6-9]\d{9}$/.test(form.mobile)) e.mobile = 'Enter a valid 10-digit mobile number';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Enter a valid email address';
     if (form.pgName.trim().length < 2) e.pgName = 'Enter your PG’s name';
-    if (form.address.trim().length < 5) e.address = 'Enter the street address';
-    if (form.city.trim().length < 2) e.city = 'Enter the city';
     if (!/^[a-z][a-z0-9_]{3,29}$/.test(usernameValue.trim().toLowerCase())) e.pgUsername = 'Start with a letter; 4–30 letters, numbers or underscores';
     else if (username.state === 'bad') e.pgUsername = username.message ?? 'Username is not available';
     if (form.password.length < 8) e.password = 'Use at least 8 characters';
     return e;
   };
+  const locErrors = () => ({
+    ...(loc.address.trim().length < 5 ? { address: 'Enter the street address' } : {}),
+    ...(loc.city.trim().length < 2 ? { city: 'Enter the city' } : {}),
+  });
 
   const submit = async (ev: React.FormEvent) => {
     ev.preventDefault();
     const e = validate();
-    setErrors(e);
+    const le = locErrors();
+    setErrors({ ...e, ...le });
     setFormError('');
-    if (Object.keys(e).length) return;
+    if (Object.keys(e).length || Object.keys(le).length) return;
     setBusy(true);
     const res = await ownerRegister({
       owner: { fullName: form.fullName.trim(), mobile: form.mobile, email: form.email.trim() },
-      pg: { pgName: form.pgName.trim(), pgType: form.pgType, address: form.address.trim(), city: form.city.trim(), state: form.state.trim(), pinCode: form.pinCode.trim() },
+      pg: {
+        pgName: form.pgName.trim(), pgType: form.pgType, address: loc.address.trim(), area: loc.area.trim(), city: loc.city.trim(), state: loc.state.trim(), pinCode: loc.pinCode.trim(),
+        ...(loc.latitude != null && loc.longitude != null ? { latitude: loc.latitude, longitude: loc.longitude } : {}),
+      },
       pgUsername: usernameValue.trim().toLowerCase(),
       password: form.password,
     });
@@ -108,10 +117,11 @@ export default function RegisterPage() {
               <option>Co-living</option><option>Boys</option><option>Girls</option><option>Other</option>
             </select>
           </div>
-          <div className="sm:col-span-2">{input('address', 'Address')}</div>
-          {input('city', 'City')}
-          {input('state', 'State (optional)')}
-          {input('pinCode', 'PIN code (optional)', { inputMode: 'numeric', maxLength: 6 })}
+        </fieldset>
+
+        <fieldset>
+          <legend className="text-xs font-semibold text-dark-400 uppercase tracking-wide mb-3">Location</legend>
+          <LocationPicker value={loc} onChange={setLoc} errors={{ address: errors.address as string | undefined, city: errors.city as string | undefined }} />
         </fieldset>
 
         <fieldset className="grid sm:grid-cols-2 gap-4">

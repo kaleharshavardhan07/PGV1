@@ -6,6 +6,7 @@ import { generateUsernameSuggestions, usernameError, normalizeUsername } from '.
 import * as accounts from '../repositories/accounts.js';
 import * as tenants from '../repositories/tenants.js';
 import { recordAudit } from '../services/auditService.js';
+import { mail } from '../services/mailService.js';
 
 const ownerUser = (pg) => ({
   id: pg.id,
@@ -35,6 +36,7 @@ export const ownerRegister = asyncHandler(async (req, res) => {
 
   const account = await accounts.createOwner({ owner, pg, pgUsername: username, passwordHash: await hashPassword(password) });
   recordAudit(account.id, account.id, 'owner.registered', 'PgAccount', account.id, `Registered ${account.pgName}`);
+  mail.ownerWelcome(owner, account); // best effort, never blocks sign-up
   res.status(201).json(ownerSession(account));
 });
 
@@ -67,6 +69,7 @@ export const managerLogin = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
   const manager = await accounts.findManagerForLogin(email);
   if (!manager || !(await verifyPassword(password, manager.passwordHash))) throw ApiError.unauthorized('Incorrect email or password');
+  if (!manager.isActive) throw ApiError.forbidden('This manager account has been deactivated. Contact the PG owner.');
   res.json({
     success: true,
     token: signToken({ sub: manager.id, role: 'manager' }),
@@ -96,7 +99,8 @@ export const tenantLogin = asyncHandler(async (req, res) => {
 export const me = asyncHandler(async (req, res) => {
   const { role, doc, pgId } = req.user;
   const base = { id: req.user.id, role, pgId };
-  if (role === 'owner') Object.assign(base, { pgName: doc.pgName, pgUsername: doc.pgUsername, ownerName: doc.ownerName, email: doc.ownerEmail });
+  if (role === 'admin') Object.assign(base, { fullName: doc.name, email: doc.email });
+  else if (role === 'owner') Object.assign(base, { pgName: doc.pgName, pgUsername: doc.pgUsername, ownerName: doc.ownerName, email: doc.ownerEmail });
   else if (role === 'manager') Object.assign(base, { fullName: doc.fullName, email: doc.email });
   else Object.assign(base, { fullName: doc.fullName, mobile: doc.mobile, email: doc.email });
   res.json({ success: true, user: base });
@@ -108,6 +112,6 @@ export const changePassword = asyncHandler(async (req, res) => {
   const hash = await accounts.getPasswordHash(role, id);
   if (!(await verifyPassword(currentPassword, hash))) throw ApiError.badRequest('Current password is incorrect');
   await accounts.setPassword(role, id, await hashPassword(newPassword));
-  recordAudit(pgId, id, 'password.changed', role, id, 'Password changed');
+  if (pgId) recordAudit(pgId, id, 'password.changed', role, id, 'Password changed');
   res.json({ success: true, message: 'Password updated' });
 });

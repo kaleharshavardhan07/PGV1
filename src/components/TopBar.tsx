@@ -23,6 +23,7 @@ export default function TopBar({ role, onMenuClick }: TopBarProps) {
   const user = (session?.user ?? {}) as Record<string, string | undefined>;
   const displayName =
     role === 'owner' ? user.ownerName ?? data.settings.ownerName : user.fullName ?? data.tenants[0]?.fullName ?? 'User';
+  const isAdmin = role === 'admin';
   const unread = data.notifications.filter((n) => !n.read);
 
   useEffect(() => {
@@ -34,7 +35,7 @@ export default function TopBar({ role, onMenuClick }: TopBarProps) {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const profilePath = role === 'tenant' ? '/app/tenant/profile' : '/app/owner/settings';
+  const profilePath = role === 'tenant' ? '/app/tenant/profile' : role === 'admin' ? '/app/admin' : role === 'manager' ? '/app/manager' : '/app/owner/settings';
 
   return (
     <header className="bg-white/90 backdrop-blur border-b border-dark-200 px-4 lg:px-8 h-16 flex items-center gap-3 sticky top-0 z-20">
@@ -42,7 +43,7 @@ export default function TopBar({ role, onMenuClick }: TopBarProps) {
         <Menu size={20} />
       </button>
       <div className="flex-1 min-w-0 text-sm text-dark-500 truncate">
-        <span className="font-semibold text-dark-800">{data.settings.name}</span>
+        <span className="font-semibold text-dark-800">{isAdmin ? 'Platform administration' : data.settings.name}</span>
       </div>
 
       <div className="relative" ref={notifRef}>
@@ -112,7 +113,7 @@ export default function TopBar({ role, onMenuClick }: TopBarProps) {
               onClick={() => { navigate(profilePath); setUserOpen(false); }}
               className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-dark-700 hover:bg-dark-50"
             >
-              <KeyRound size={14} /> {role === 'tenant' ? 'Profile & password' : 'Settings'}
+              <KeyRound size={14} /> {role === 'tenant' ? 'Profile & password' : role === 'owner' ? 'Settings' : 'Home'}
             </button>
             <button
               onClick={() => { logout(); navigate('/'); }}
