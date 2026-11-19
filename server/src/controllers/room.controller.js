@@ -1,104 +1,64 @@
 import ApiError from '../utils/apiError.js';
 import asyncHandler from '../utils/asyncHandler.js';
-import { Room, Bed, Tenant, PgAccount } from '../models/index.js';
-import { runNotificationEngine } from '../services/notificationEngine.js';
+import * as rooms from '../repositories/rooms.js';
 import { recordAudit } from '../services/auditService.js';
-import { todayISO } from '../utils/ids.js';
 
 export const listRooms = asyncHandler(async (req, res) => {
-  const rooms = await Room.find({ pg: req.pgId }).sort({ roomNumber: 1 });
-  const beds = await Bed.find({ pg: req.pgId });
-  const result = rooms.map((r) => {
-    const roomBeds = beds.filter((b) => String(b.room) === String(r._id));
-    return {
-      ...r.toJSON(),
-      occupiedBeds: roomBeds.filter((b) => b.status === 'occupied').length,
-      beds: roomBeds,
-    };
-  });
-  res.json({ success: true, rooms: result });
+  res.json({ success: true, rooms: await rooms.listRooms(req.pgId) });
+});
+
+export const getRoom = asyncHandler(async (req, res) => {
+  const room = await rooms.getRoom(req.pgId, req.params.id);
+  if (!room) throw ApiError.notFound('Room not found');
+  res.json({ success: true, room });
 });
 
 export const createRoom = asyncHandler(async (req, res) => {
-  const room = await Room.create({ pg: req.pgId, ...req.body });
-
-  // Auto-provision beds for the room.
-  const beds = [];
-  for (let i = 1; i <= room.totalBeds; i++) {
-    beds.push({ pg: req.pgId, room: room._id, bedNumber: i, status: 'vacant' });
-  }
-  if (beds.length) await Bed.insertMany(beds);
-
-  recordAudit(req.user.id, 'room.created', 'Room', room.id, `Created room ${room.roomNumber}`);
-  await runNotificationEngine(req.pgId);
+  const id = await rooms.createRoom(req.pgId, req.body);
+  const room = await rooms.getRoom(req.pgId, id);
+  recordAudit(req.pgId, req.user.id, 'room.created', 'Room', id, `Created room ${room.roomNumber} with ${room.totalBeds} bed(s)`);
   res.status(201).json({ success: true, room });
 });
 
 export const updateRoom = asyncHandler(async (req, res) => {
-  const room = await Room.findOneAndUpdate({ _id: req.params.id, pg: req.pgId }, req.body, {
-    new: true,
-    runValidators: true,
-  });
+  const room = await rooms.updateRoom(req.pgId, req.params.id, req.body);
   if (!room) throw ApiError.notFound('Room not found');
-  recordAudit(req.user.id, 'room.updated', 'Room', room.id, 'Updated room');
+  recordAudit(req.pgId, req.user.id, 'room.updated', 'Room', room.id, `Updated room ${room.roomNumber}`);
   res.json({ success: true, room });
 });
 
 export const deleteRoom = asyncHandler(async (req, res) => {
-  const room = await Room.findOneAndDelete({ _id: req.params.id, pg: req.pgId });
-  if (!room) throw ApiError.notFound('Room not found');
-  await Bed.deleteMany({ room: room._id });
-  recordAudit(req.user.id, 'room.deleted', 'Room', room.id, `Deleted room ${room.roomNumber}`);
+  const room = await rooms.deleteRoom(req.pgId, req.params.id);
+  recordAudit(req.pgId, req.user.id, 'room.deleted', 'Room', room.id, `Deleted room ${room.roomNumber}`);
   res.json({ success: true, message: 'Room deleted' });
 });
 
 // ---------- Beds ----------
 
 export const listBeds = asyncHandler(async (req, res) => {
-  const filter = { pg: req.pgId };
-  if (req.query.room) filter.room = req.query.room;
-  if (req.query.status) filter.status = req.query.status;
-  const beds = await Bed.find(filter).sort({ room: 1, bedNumber: 1 });
+  const beds = await rooms.listBeds({ pgId: req.pgId, roomId: req.query.room, status: req.query.status });
   res.json({ success: true, beds });
 });
 
-export const updateBed = asyncHandler(async (req, res) => {
-  const bed = await Bed.findOneAndUpdate({ _id: req.params.id, pg: req.pgId }, req.body, {
-    new: true,
-    runValidators: true,
-  });
-  if (!bed) throw ApiError.notFound('Bed not found');
+export const addBed = asyncHandler(async (req, res) => {
+  const bed = await rooms.addBed(req.pgId, req.params.roomId, req.body);
+  recordAudit(req.pgId, req.user.id, 'bed.created', 'Bed', bed.id, `Added bed ${bed.bedNumber}`);
+  res.status(201).json({ success: true, bed });
+});
 
-  if (req.body.status === 'vacant') {
-    await Bed.updateOne({ _id: bed._id }, { $set: { tenant: null, vacantSince: req.body.vacantSince ?? todayISO() } });
-  }
-  recordAudit(req.user.id, 'bed.updated', 'Bed', bed.id, `Bed status -> ${bed.status}`);
-  await runNotificationEngine(req.pgId);
+export const updateBed = asyncHandler(async (req, res) => {
+  const bed = await rooms.updateBed(req.pgId, req.params.id, req.body);
+  if (!bed) throw ApiError.notFound('Bed not found');
+  recordAudit(req.pgId, req.user.id, 'bed.updated', 'Bed', bed.id, `Updated bed ${bed.bedNumber}`);
   res.json({ success: true, bed });
 });
 
-// ---------- Vacancy (public-safe view) ----------
-
-export const vacancySummary = asyncHandler(async (req, res) => {
-  const pg = await PgAccount.findById(req.pgId);
-  const total = await Bed.countDocuments({ pg: req.pgId });
-  const vacant = await Bed.countDocuments({ pg: req.pgId, status: 'vacant' });
-  const occupied = total - vacant;
-  const rooms = await Room.find({ pg: req.pgId });
-  const occupants = await Tenant.countDocuments({ pg: req.pgId, status: { $ne: 'Left' } });
-  res.json({
-    success: true,
-    vacancy: {
-      pgName: pg?.pgName,
-      city: pg?.city,
-      pgType: pg?.pgType,
-      totalBeds: total,
-      vacantBeds: vacant,
-      occupiedBeds: occupied,
-      totalRooms: rooms.length,
-      occupants,
-      occupancyPercent: total ? Math.round((occupied / total) * 100) : 0,
-    },
-  });
+export const deleteBed = asyncHandler(async (req, res) => {
+  const bed = await rooms.deleteBed(req.pgId, req.params.id);
+  recordAudit(req.pgId, req.user.id, 'bed.deleted', 'Bed', bed.id, `Deleted bed ${bed.bedNumber}`);
+  res.json({ success: true, message: 'Bed deleted' });
 });
 
+export const vacancySummary = asyncHandler(async (req, res) => {
+  res.json({ success: true, vacancy: await rooms.vacancyCounts(req.pgId) });
+});

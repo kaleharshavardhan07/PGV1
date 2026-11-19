@@ -1,99 +1,49 @@
 import ApiError from '../utils/apiError.js';
 import asyncHandler from '../utils/asyncHandler.js';
-import { MeterReading, Room, Tenant, Payment, Workspace } from '../models/index.js';
+import * as ops from '../repositories/operations.js';
+import * as rooms from '../repositories/rooms.js';
+import * as tenants from '../repositories/tenants.js';
+import { getSettings } from '../repositories/accounts.js';
 import { runNotificationEngine } from '../services/notificationEngine.js';
 import { recordAudit } from '../services/auditService.js';
-import { nowISO } from '../utils/ids.js';
 
 export const listReadings = asyncHandler(async (req, res) => {
-  const filter = { pg: req.pgId };
-  if (req.query.month) filter.month = req.query.month;
-  if (req.query.room) filter.room = req.query.room;
-
-  // Tenants may only see their own room's readings.
+  const { month, room } = req.query;
   if (req.user.role === 'tenant') {
-    const tenant = req.tenantId ? await Tenant.findById(req.tenantId) : null;
-    filter.room = tenant?.room ?? null;
+    // Tenants see only published readings for the room they live in.
+    const me = await tenants.getTenant(req.pgId, req.tenantId);
+    if (!me?.roomId) return res.json({ success: true, readings: [] });
+    return res.json({ success: true, readings: await ops.listReadings({ pgId: req.pgId, month, roomId: me.roomId, publishedOnly: true }) });
   }
-
-  const readings = await MeterReading.find(filter).sort({ month: -1, createdAt: -1 });
-  const rooms = await Room.find({ pg: req.pgId });
-  const roomById = new Map(rooms.map((r) => [String(r._id), r.roomNumber]));
-  res.json({
-    success: true,
-    readings: readings.map((m) => ({ ...m.toJSON(), roomNumber: roomById.get(String(m.room)) })),
-  });
+  res.json({ success: true, readings: await ops.listReadings({ pgId: req.pgId, month, roomId: room }) });
 });
 
 export const saveReading = asyncHandler(async (req, res) => {
-  const { room: roomId, month, previousReading, currentReading, ratePerUnit, occupants, photoUrl } = req.body;
+  const { room: roomId, month, previousReading, currentReading, ratePerUnit, occupants } = req.body;
+  if (currentReading < previousReading) throw ApiError.badRequest('Current reading cannot be lower than the previous reading');
 
-  const room = await Room.findOne({ _id: roomId, pg: req.pgId });
+  const room = await rooms.getRoom(req.pgId, roomId);
   if (!room) throw ApiError.badRequest('Room not found');
 
-  const workspace = await Workspace.findOne({ pg: req.pgId }).lean();
-  const rate = ratePerUnit ?? workspace?.settings?.electricityRate ?? 8.5;
-  const occ = occupants ?? 1;
-  const units = Math.max(0, currentReading - previousReading);
+  const { settings } = await getSettings(req.pgId);
+  const rate = ratePerUnit ?? settings.electricityRate;
+  const people = occupants ?? Math.max(1, room.occupiedBeds);
+  const units = currentReading - previousReading;
   const totalAmount = Math.round(units * rate);
-  const perTenantAmount = Math.round(totalAmount / Math.max(1, occ));
 
-  const reading = await MeterReading.findOneAndUpdate(
-    { pg: req.pgId, room: roomId, month },
-    {
-      $set: {
-        previousReading,
-        currentReading,
-        units,
-        ratePerUnit: rate,
-        totalAmount,
-        occupants: occ,
-        perTenantAmount,
-        photoUrl,
-        recordedAt: nowISO(),
-      },
-    },
-    { new: true, upsert: true, runValidators: true }
-  );
-
-  recordAudit(req.user.id, 'meter.saved', 'MeterReading', reading.id, `Reading for ${room.roomNumber} (${month}): ${units} units`);
+  const reading = await ops.saveReading(req.pgId, {
+    roomId, month, previousReading, currentReading, units, ratePerUnit: rate, totalAmount,
+    occupants: people, perTenantAmount: Math.round(totalAmount / people),
+  });
+  recordAudit(req.pgId, req.user.id, 'meter.saved', 'MeterReading', reading.id, `Room ${room.roomNumber} (${month}): ${units} units`);
   res.json({ success: true, reading });
 });
 
+// Publishing makes a month's readings visible to tenants and notifies them.
 export const publishBills = asyncHandler(async (req, res) => {
-  const { month } = req.body;
-  const readings = await MeterReading.find({ pg: req.pgId, month, published: false });
-
-  if (!readings.length) throw ApiError.badRequest('No unpublished readings for this month');
-
-  const workspace = await Workspace.findOne({ pg: req.pgId }).lean();
-  const dueInDays = workspace?.reminderSchedule?.electricityDueInDays ?? 5;
-  const due = new Date(`${month}-01T00:00:00`);
-  due.setMonth(due.getMonth() + 1);
-  due.setDate(dueInDays);
-  const dueDate = due.toISOString().split('T')[0];
-
-  let created = 0;
-  for (const reading of readings) {
-    const tenants = await Tenant.find({ pg: req.pgId, room: reading.room, status: { $ne: 'Left' } });
-    for (const tenant of tenants) {
-      await Payment.create({
-        pg: req.pgId,
-        tenant: tenant._id,
-        type: 'Electricity',
-        month,
-        amount: reading.perTenantAmount,
-        method: 'UPI',
-        status: 'Pending',
-        dueDate,
-      });
-      created++;
-    }
-    reading.published = true;
-    await reading.save();
-  }
-
-  recordAudit(req.user.id, 'meter.published', 'MeterReading', 'bulk', `Published electricity bills for ${month} (${created} tenant bills)`);
+  const published = await ops.publishReadings(req.pgId, req.body.month);
+  if (!published.length) throw ApiError.badRequest('No unpublished readings for this month');
+  recordAudit(req.pgId, req.user.id, 'meter.published', 'MeterReading', req.body.month, `Published ${published.length} reading(s) for ${req.body.month}`);
   await runNotificationEngine(req.pgId);
-  res.json({ success: true, publishedReadings: readings.length, tenantBillsCreated: created });
+  res.json({ success: true, publishedReadings: published.length });
 });

@@ -1,306 +1,133 @@
 # Aapka PG — Low-Level Design (LLD)
 
-> Design of the **Aapka PG** backend: Node.js + Express + MongoDB REST API.
-> This document describes the architecture, data model, API contract, and key
-> flows. It is the implementation reference for the `server/` directory.
+> Backend design for **Aapka PG**: Node.js + Express REST API on **PostgreSQL (Neon)**.
+> Implementation reference for the `server/` directory.
 
----
+## 1. Scope
 
-## 1. Architecture overview
+A PG owner registers a PG, manages **rooms and beds**, creates **tenant accounts**
+directly (no tenant self-registration, no OTP), and stores tenant **documents**.
+Tenants sign in with mobile + password to see their stay, documents, electricity
+share, complaints and food menu. There is **no payment functionality** (no rent
+ledger, gateway, subscriptions or checkout).
+
+## 2. Architecture
 
 ```
-                    ┌────────────────────────────┐
-                    │   React SPA (Vite frontend)│
-                    └─────────────┬──────────────┘
-                                  │ HTTPS / JSON (REST)
-                    ┌─────────────▼──────────────┐
-                    │      Express API server    │
-                    │  middlewares → routes →    │
-                    │  controllers → services    │
-                    └─────────────┬──────────────┘
-                                  │ Mongoose ODM
-                    ┌─────────────▼──────────────┐
-                    │          MongoDB           │
-                    └────────────────────────────┘
+React SPA ──HTTPS/JSON──▶ Express ──▶ routes → middlewares → controllers → repositories ──pg──▶ Neon Postgres
+                                                              └▶ services (notification engine, delivery, tokens)
 ```
 
-Layered structure (each layer only talks downward):
-
-1. **Routes** — define URL ↔ controller mapping + middleware guards.
-2. **Middlewares** — authentication, role guard, PG context, validation, errors.
-3. **Controllers** — extract input, call services/models, shape responses.
-4. **Services** — business logic (billing, notification engine, delivery,
-   payment verification, subscription policy).
-5. **Models** — Mongoose schemas (the persistence contract).
-6. **Config / Utils** — environment, DB connection, logging, ids.
-
----
-
-## 2. Data model
-
-Three logical groups of collections:
-
-### 2.1 Identity & authentication
-
-| Collection | Purpose | Key fields |
+| Layer | Folder | Responsibility |
 |---|---|---|
-| `PgAccount` | Owner identity **and** PG profile (one owner = one PG in this prototype) | `pgUsername` (unique, public), `ownerEmail` (unique), `ownerMobile` (unique), `passwordHash`, `isActive`, `isDiscoverable`, `showAvailableBeds`, `subscriptionPlanId` |
-| `TenantUser` | Platform-wide tenant identity | `mobile` (unique), `fullName`, `email`, `passwordHash` (optional — OTP login supported) |
-| `Manager` | Per-PG staff identity | `pg` → PgAccount, `email` (unique), `passwordHash` |
+| Routes | `routes/` | URL ↔ controller mapping + guards (`staff`, `owner`, `anyRole`, `tenantOnly`) |
+| Middlewares | `middlewares/` | JWT auth, role guard, PG scoping, Zod validation, uploads, error mapping |
+| Controllers | `controllers/` | HTTP in/out, authorisation decisions, audit records |
+| Repositories | `repositories/` | All SQL. Parameterised queries only; rows returned camelCased |
+| Services | `services/` | Notification engine, simulated delivery, token signing, username rules |
+| DB | `db/` | `schema.sql` (idempotent DDL), pool, `query/one/transaction` helpers, migrate-on-start |
 
-### 2.2 Per-PG domain data
+## 3. Data model (PostgreSQL)
 
-All rows are scoped to a PG via the `pg` reference (an `ObjectId` pointing at
-`PgAccount`). This is the multi-tenancy boundary.
-
-| Collection | Purpose | Key fields |
-|---|---|---|
-| `Workspace` | Singleton per-PG config: **settings**, **reminderSchedule**, **subscription** (embedded sub-documents, `_id: false`) | `pg` (unique) |
-| `Room` | A physical room | `roomNumber` (unique per PG), `floor`, `totalBeds`, `sharingType`, `attachedBathroom` |
-| `Bed` | A bed inside a room | `room`, `bedNumber` (unique per room), `status`, `tenant` |
-| `Tenant` | Per-PG tenant record | `fullName`, `mobile`, `room`, `bedNumber`, `monthlyRent`, `securityDeposit`, `joiningDate`, `status` (Active / Notice Period / Left), `policeVerification`, `user` → TenantUser |
-| `MeterReading` | Monthly electricity reading per room | `room`, `month` (unique per room), `previousReading`, `currentReading`, `units`, `ratePerUnit`, `totalAmount`, `perTenantAmount`, `published` |
-| `Payment` | Tenant ledger entry | `tenant`, `type` (Rent / Electricity / Deposit), `month`, `amount`, `status` (Paid / Pending / Overdue), `dueDate`, `method` |
-| `Complaint` | Tenant complaint | `tenant`, `category`, `description`, `status` (Submitted → Seen → In Progress → Resolved), `roomNumber`, `remarks` |
-| `FoodMenuItem` | Weekly menu entry | `day`, `mealType` (unique per PG+day+meal), `items[]`, `timing` |
-| `MealOptOut` | Tenant meal opt-out | `tenant`, `date`, `mealType` (unique per tenant+date+meal) |
-| `FoodRating` | Tenant meal rating | `tenant`, `date`, `mealType`, `rating` (1–5), `review` |
-| `Notification` | In-app notification | `userId`, `userRole`, `title`, `message`, `type`, `read`, `link`, `category`, `dedupeKey` (idempotency) |
-| `NotificationLog` | Delivery history per channel | `dedupeKey`, `recipient`, `recipientRole`, `channel`, `status`, `attempts`, `note` |
-| `NotificationPref` | Per-tenant channel opt-outs | `tenant`, `whatsapp`, `sms`, `email` |
-
-### 2.3 Platform registry (multi-PG SaaS)
-
-| Collection | Purpose | Key fields |
-|---|---|---|
-| `AdmissionRequest` | Tenant → PG admission application | `requestId` (unique, `AR-YYYY-NNNN`), `pg`, `tenantUser`, `status` (Pending / Approved / Rejected), allocation preferences, documents |
-| `Membership` | Tenant-to-PG membership (historical, never hard-deleted) | `pg`, `tenantUser`, `tenant`, `room`, `bed`, `status` (Active / Ended / Deactivated), `joiningDate`, `leavingDate`, rent/deposit snapshot |
-| `PendingRegistration` | Resumable owner onboarding state | `owner`, `pg` (sub-document of PG details), `planId`, `cycle`, `amount`, `status`, `pgId` (set after payment), `suggestedUsernames`, `processedCallbacks` |
-| `AuditLog` | Append-only action trail | `actor`, `action`, `entity`, `entityId`, `details`, `ts` |
-
----
-
-## 3. Entity relationships
+All domain tables carry `pg_id → pg_accounts(id) ON DELETE CASCADE`: the PG owner is the
+multi-tenancy boundary and every query is scoped by it.
 
 ```
-PgAccount 1 ──── 1 Workspace
-PgAccount 1 ──── N Room ──── N Bed
-PgAccount 1 ──── N Tenant
-PgAccount 1 ──── N MeterReading, Payment, Complaint, FoodMenuItem, Notification…
-PgAccount 1 ──── N Manager
-
-TenantUser 1 ──── N Membership ──── 1 Tenant
-TenantUser 1 ──── N AdmissionRequest ──── 1 PgAccount
-
-Tenant 1 ──── N Payment
-Tenant 1 ──── N Complaint
-Tenant 1 ──── N MealOptOut / FoodRating
-Room  1 ──── N Bed
-Room  1 ──── N MeterReading
-Bed   0..1 ──── Tenant (occupancy link)
+pg_accounts 1─1 workspace_settings
+pg_accounts 1─N managers
+pg_accounts 1─N rooms 1─N beds 0..1─1 tenants        (tenants.bed_id → beds.id, UNIQUE)
+pg_accounts 1─N tenants 1─N documents                 (bytea, ≤ 5 MB)
+tenants 1─N complaints | meal_opt_outs | food_ratings | notification_prefs
+rooms 1─N meter_readings
+pg_accounts 1─N food_menu_items | notifications | notification_logs | audit_logs
 ```
 
-Key invariants:
+Key design decisions:
 
-- A `Bed` is either `vacant` or references exactly one `Tenant`.
-- An active `Membership` links one `TenantUser` to one `Tenant` in one PG.
-- `Payment.tenant` always points at a `Tenant` record (per-PG ledger), never a
-  platform `TenantUser`.
-- Every notification draft carries a `dedupeKey`; the key is unique across
-  `Notification` + `NotificationLog`, making the engine idempotent.
+- **Occupancy is derived, not stored.** A bed is `occupied` iff a tenant references it via
+  `tenants.bed_id` (`notice` when that tenant is on notice). A partial unique index on
+  `tenants(bed_id)` makes double-booking impossible; a room's bed count is `count(beds)`.
+- **Tenant = account.** `tenants` holds both the record and the credentials
+  (`password_hash`, bcrypt). A partial unique index on `tenants(mobile) WHERE status <> 'Left'`
+  guarantees one live login per mobile number, so login by mobile alone is unambiguous.
+- **Moving out** sets `status = 'Left'`, clears `bed_id` (bed becomes vacant) and disables login;
+  the record, documents and complaint history are kept.
+- **Deletes**: rooms/beds cannot be deleted while occupied (409). Deleting a room cascades to
+  its beds and meter readings. Deleting a tenant cascades to their documents/complaints.
+- **Documents** are stored in a `bytea` column so they survive ephemeral-disk hosts. `data` is
+  never selected by list queries.
+- Integrity is enforced with `CHECK` constraints (enums, non-negative amounts, rating 1–5).
 
----
+## 4. Authentication & authorisation
 
-## 4. Authentication & authorization
+JWT (HS256) `{ sub, role }` — `owner` (sub = `pg_accounts.id`), `manager`, `tenant`
+(sub = `tenants.id`). The PG is **always resolved from the database**, never trusted from the
+token. A deactivated tenant (`Left`) is rejected on the next request, so moving out revokes
+access immediately.
 
-### 4.1 Token
+| Role | Login |
+|---|---|
+| Owner | PG username or email + password (`POST /auth/owner/login`); self-registers via `POST /auth/owner/register` (single step) |
+| Manager | email + password |
+| Tenant | **mobile + password** — account created by the owner/manager; no OTP, no self-registration |
 
-JWT (HS256) with payload `{ sub: <id>, role: 'owner'|'manager'|'tenant', pgId? }`.
-`pgId` is resolved at login:
-
-- **owner** → `sub` = `PgAccount._id`, `pgId` = same.
-- **manager** → `sub` = `Manager._id`, `pgId` = `Manager.pg`.
-- **tenant** → `sub` = `TenantUser._id`, `pgId` = active membership's PG (if any).
-
-Passwords are hashed with **bcrypt** (cost 10). Tenant OTP is simulated: the
-server accepts the configured `DEMO_OTP` and returns it only in development.
-
-### 4.2 Owner onboarding (3-step state machine)
-
-```
-Awaiting Payment ──(payment verified)──▶ Payment Verified
-        │                                        │
-        │(callback rejected)                     │ (username + password set)
-        ▼                                        ▼
- Payment Failed                           Username Confirmed → Active
-```
-
-1. `POST /auth/owner/register` — create `PendingRegistration`, simulate a
-   payment order, generate username suggestions.
-2. `POST /auth/owner/complete-payment` — simulate the gateway callback, **verify
-   signature + idempotency**, then create `PgAccount` + `Workspace`.
-3. `POST /auth/owner/activate` — validate username uniqueness, hash password,
-   set `isActive`, issue JWT.
-
-### 4.3 Role-based access matrix
+Role matrix:
 
 | Resource | owner | manager | tenant |
 |---|---|---|---|
-| Rooms/beds (create/update/delete) | ✅ | ❌ (read + bed status ✅) | ❌ |
-| Tenants (CRUD) | ✅ | create/update/list ✅, delete ❌ | ❌ |
-| Admissions approve/reject | ✅ | ✅ | ❌ |
-| Payments pay/remind | ✅ | ✅ | own pay ✅ |
-| Meter readings / publish | ✅ | ✅ | ❌ |
-| Complaints | update status ✅ | ✅ | create own ✅ |
-| Settings / reminder schedule | ✅ | ❌ | ❌ |
-| Subscription | ✅ | ❌ | ❌ |
-| Notifications | ✅ | ✅ | own ✅ |
-| Food menu | ✅ | ✅ | read ✅, opt-out/rate own ✅ |
+| Rooms / beds create, edit, delete | ✅ | read | read (own PG) |
+| Tenants: create account, edit, reset password, notice, move-out, reallocate | ✅ | ✅ | — |
+| Tenants: delete | ✅ | — | — |
+| Documents: list / upload / view | all in PG | all in PG | own only |
+| Documents: delete | ✅ | ✅ | only what they uploaded |
+| Meter readings: record / publish | ✅ | ✅ | view own room, published only |
+| Complaints | update status | update status | create / view own |
+| Settings | ✅ | read | read |
 
----
+## 5. API (prefix `/api`, `Authorization: Bearer <token>`)
 
-## 5. API surface
+**Auth** — `POST /auth/owner/register`, `POST /auth/owner/login`, `GET /auth/owner/username-available`,
+`POST /auth/manager/login`, `POST /auth/tenant/login`, `GET /auth/me`, `POST /auth/change-password`, `GET /me/context`.
 
-Prefix: `/api`. Auth header: `Authorization: Bearer <token>`.
+**Rooms & beds** — `GET|POST /rooms`, `GET|PATCH|DELETE /rooms/:id`, `POST /rooms/:roomId/beds`,
+`GET /beds`, `PATCH|DELETE /beds/:id`, `GET /vacancy`.
+`POST /rooms` accepts `bedCount` (+ optional `bedRent`) to create the room with its beds in one transaction.
 
-### Auth
-| Method | Path | Roles | Description |
-|---|---|---|---|
-| POST | `/auth/owner/register` | public | Start onboarding (creates pending registration + simulated order) |
-| POST | `/auth/owner/complete-payment` | public | Verify gateway callback, create PG + workspace |
-| POST | `/auth/owner/activate` | public | Confirm username + password, activate, issue token |
-| POST | `/auth/owner/login` | public | Owner login (username or email + password) |
-| POST | `/auth/owner/reset-password` | public | Demo reset (OTP + new password) |
-| POST | `/auth/tenant/register` | public | Create tenant platform account |
-| POST | `/auth/tenant/otp` | public | Send (simulated) OTP |
-| POST | `/auth/tenant/login` | public | Tenant login (mobile + OTP or password) |
-| POST | `/auth/manager/login` | public | Manager login |
-| GET | `/auth/me` | any | Current principal |
+**Tenants** — `GET|POST /tenants`, `GET|PATCH|DELETE /tenants/:id`, `POST /tenants/:id/reset-password`,
+`/notice`, `/move-out`, `/reallocate {bedId}`. `POST /tenants` returns `credentials` (mobile + temporary
+password) **once**; the password is generated if not supplied.
 
-### Domain (all require auth + PG context)
-See the route table in `server/README.md` for the complete list.
+**Documents** — `GET /documents[?tenant=]`, `POST /documents` (multipart: `file`, `type`, `title`, `tenantId` for staff),
+`POST /documents/:id/link`, `GET /documents/:id/file`, `DELETE /documents/:id`.
+Upload rules: PDF/JPEG/PNG/WebP, ≤ 5 MB, and the file's leading bytes must match its declared type.
+Because browsers cannot send an `Authorization` header from `<img>`/`window.open`, the client requests a
+**2-minute link token scoped to one document**; `/file` accepts either a bearer session or that token.
+Link tokens are rejected as session tokens and vice versa.
 
----
+**Operations** — `/meter` (+`/publish`), `/complaints`, `/food/*`, `/notifications*`, `/settings`, `/reminder-schedule`,
+`/dashboard/summary`. **Public** — `/public/pgs`, `/public/pg/:username[/vacancy]`.
 
-## 6. Notification automation engine
+## 6. Notification engine
 
-`services/notificationEngine.js` — a port of the frontend engine, run **after
-every data-changing action** and on demand (`POST /notifications/run`). It is
-idempotent via `dedupeKey`s.
+`services/notificationEngine.js` runs after relevant actions and on demand. Idempotent via
+`UNIQUE (pg_id, dedupe_key)` + `ON CONFLICT DO NOTHING`. Triggers: complaints open longer than the
+configured hours (→ managers), newly added tenants (→ managers), published electricity readings (→ the
+room's tenants). Delivery (`deliveryService.js`): in-app is real; WhatsApp/SMS/Email are simulated with
+retry policy and per-tenant opt-outs. The engine never fails the request that triggered it.
 
-Triggers:
+## 7. Errors
 
-- **Rent** — upcoming (`rentDaysBefore`), due today, overdue buckets
-  (`rentOverdueDays` e.g. 1/3/7) with manager escalation at day 3 and owner
-  escalation at day 7.
-- **Electricity** — bill published, due soon, overdue with escalation.
-- **Complaints** — unresolved after `complaintUnresolvedHours`.
-- **Tenant / Bed events** — new tenant joined, newly vacant bed.
-- **Owner summary** — monthly collection summary after day 3.
-- **Subscription** — trial ending (3/1 days), renewal reminders (7/3/1 days),
-  past-due and suspension notices.
+Zod → `400` with `details`; Postgres violations → friendly `409`/`400` (e.g. "This bed is already
+occupied"); `ApiError` → its status; unknown → `500`. Envelope: `{ success:false, message, details? }`.
 
-Side effects performed by the engine:
+## 8. Security
 
-- Marks `Pending` payments past their due date as `Overdue`.
-- Advances subscription lifecycle (trial → expired, active → payment pending
-  → past due → suspended) per the reminder schedule.
+bcrypt (cost 10) passwords, never returned or logged; login errors do not reveal which field was wrong;
+helmet; Zod validation on every mutating route; parameterised SQL everywhere; PG scoping on every query;
+upload type + signature validation and size cap; `JWT_SECRET` required in production (server refuses to start otherwise).
 
-Delivery (`services/deliveryService.js`): in-app is real; WhatsApp/SMS/Email are
-simulated with a deterministic ~85% success rate, per-channel retry policy, and
-tenant opt-out + plan-gating checks. A `NotificationLog` row records each
-channel attempt.
+## 9. Deployment
 
----
-
-## 7. Payment gateway simulation
-
-`services/paymentGateway.js` mirrors a real gateway flow:
-
-1. `createOrder(amount, method)` → `{ orderId, status: 'created' }`.
-2. `simulateGatewayCallback(order, outcome)` → signed callback
-   (`signature = HMAC-style digest of orderId|paymentId|status`).
-3. `verifyCallback(cb, processedIds)` → recomputes the signature and rejects
-   **invalid signatures** and **duplicate (replayed) callbacks** before any
-   state is activated.
-
-The frontend never activates an account; only a verified server-side callback
-does. The same contract is used for SaaS subscription payments and owner
-onboarding.
-
----
-
-## 8. Subscription lifecycle
-
-SaaS subscription is stored in the `Workspace.subscription` sub-document and is
-kept fully separate from tenant payment ledgers.
-
-```
-Trial ──▶ Active ──▶ Payment Pending ──▶ Past Due ──▶ Suspended
-                │                          ▲            │
-                └──(renew/auto-renew)──────┘            └──▶ Expired (records preserved)
-```
-
-- `FULL_ACCESS_STATUSES = Trial | Active | Cancelled` grant plan features.
-- Plan feature matrix lives in `constants/plans.js` and gates WhatsApp/automation.
-- `PendingRegistration` → `Subscription` amount is derived from `PLANS` by plan + cycle.
-
----
-
-## 9. Error handling
-
-Central `middlewares/error.js` normalizes:
-
-- Zod `ZodError` → `400` with field-level `details`.
-- Mongoose `ValidationError` / `CastError` → `400`.
-- Duplicate key `11000` → `409` with the offending field.
-- `ApiError` → its status + message.
-- Unknown errors → `500` (stack only in development).
-
-Response envelope:
-
-```json
-{ "success": false, "message": "...", "details": [ { "path": "…", "message": "…" } ] }
-```
-
----
-
-## 10. Security considerations
-
-- bcrypt password hashing; passwords never stored in plain text.
-- JWT with configurable secret + expiry; secret must be set in production.
-- Role + PG scoping on every domain route (multi-tenant isolation).
-- Zod validation on all mutating endpoints.
-- Helmet security headers, CORS allow-list.
-- Payment callbacks verified (signature + idempotency) server-side.
-- Audit log for sensitive actions.
-
-**Production TODO (out of scope for this prototype):**
-
-- Real SMS/WhatsApp/email providers and real OTP expiry/rate-limiting.
-- Real payment gateway webhook signing (Razorpay/Stripe HMAC).
-- Refresh tokens / token revocation list.
-- Rate limiting and request throttling.
-- Replace demo password reset with emailed OTP.
-
----
-
-## 11. Deployment
-
-1. Set `MONGO_URI`, `JWT_SECRET`, `CORS_ORIGIN` in the environment.
-2. `npm run seed` to initialize demo data (optional).
-3. `npm start` (or a process manager such as PM2 / a container).
-4. Frontend → `VITE_API_URL` pointing at this API (see the frontend README).
-
----
-
-## 12. Seed data
-
-`seed/seed.js` creates a realistic demo dataset:
-
-- 2 PG accounts (Shree Ganesh PG — Growth, Royal Stay — Starter).
-- 10 rooms / 32 beds, 9 tenants with memberships.
-- Rent + electricity + deposit ledger with the full payment lifecycle.
-- 5 complaints across statuses, a 21-item weekly menu, ratings and opt-outs.
-- Seed notifications + delivery log, pending/rejected admission requests.
-- One owner, one manager, 9 tenant users (password `demo1234`, OTP `1234`).
+Set `DATABASE_URL` (Neon pooled string, `sslmode=require`) and `JWT_SECRET`. The schema is applied
+automatically on start (`CREATE … IF NOT EXISTS`); `npm run migrate` applies it without starting the server.
+`npm run seed` / `seed:reset` load the demo data.

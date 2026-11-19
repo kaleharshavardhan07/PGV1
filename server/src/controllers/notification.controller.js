@@ -1,70 +1,37 @@
 import ApiError from '../utils/apiError.js';
 import asyncHandler from '../utils/asyncHandler.js';
-import { Notification, NotificationPref, NotificationLog } from '../models/index.js';
+import * as repo from '../repositories/notifications.js';
 import { runNotificationEngine } from '../services/notificationEngine.js';
-import { recordAudit } from '../services/auditService.js';
 
-const tenantUserIds = (req) => [req.user.id, req.tenantId].filter(Boolean);
+const scope = (req) => ({ pgId: req.pgId, role: req.user.role, tenantId: req.tenantId });
 
 export const listNotifications = asyncHandler(async (req, res) => {
-  const role = req.user.role;
-  const filter = { pg: req.pgId, userRole: role };
-
-  if (role === 'tenant') {
-    filter.$or = [{ userId: { $in: tenantUserIds(req) } }, { userId: 'all' }];
-  } else {
-    filter.userId = { $in: [role === 'manager' ? 'manager' : 'owner', 'all'] };
-  }
-
-  const notifications = await Notification.find(filter).sort({ createdAt: -1 }).limit(100);
+  const notifications = await repo.listFor(scope(req));
   res.json({ success: true, notifications, unread: notifications.filter((n) => !n.read).length });
 });
 
 export const markRead = asyncHandler(async (req, res) => {
-  const notif = await Notification.findOneAndUpdate(
-    { _id: req.params.id, pg: req.pgId },
-    { $set: { read: true } },
-    { new: true }
-  );
-  if (!notif) throw ApiError.notFound('Notification not found');
-  res.json({ success: true, notification: notif });
+  const { pgId, role, tenantId } = scope(req);
+  if (!(await repo.markRead(pgId, role, tenantId, req.params.id))) throw ApiError.notFound('Notification not found');
+  res.json({ success: true });
 });
 
 export const markAllRead = asyncHandler(async (req, res) => {
-  const role = req.user.role;
-  const filter = { pg: req.pgId, userRole: role };
-  if (role === 'tenant') {
-    filter.$or = [{ userId: { $in: tenantUserIds(req) } }, { userId: 'all' }];
-  } else {
-    filter.userId = { $in: [role === 'manager' ? 'manager' : 'owner', 'all'] };
-  }
-  const result = await Notification.updateMany(filter, { $set: { read: true } });
-  res.json({ success: true, updated: result.modifiedCount });
+  res.json({ success: true, updated: await repo.markAllRead(scope(req)) });
 });
 
 export const getPrefs = asyncHandler(async (req, res) => {
-  const prefs =
-    (await NotificationPref.findOne({ pg: req.pgId, tenant: req.tenantId })) ??
-    { whatsapp: true, sms: true, email: true };
-  res.json({ success: true, prefs });
+  res.json({ success: true, prefs: await repo.getPrefs(req.pgId, req.tenantId) });
 });
 
 export const updatePrefs = asyncHandler(async (req, res) => {
-  const prefs = await NotificationPref.findOneAndUpdate(
-    { pg: req.pgId, tenant: req.tenantId },
-    { $set: req.body },
-    { new: true, upsert: true, runValidators: true }
-  );
-  recordAudit(req.user.id, 'notif.prefs', 'NotificationPref', prefs.id, 'Updated notification preferences');
-  res.json({ success: true, prefs });
+  res.json({ success: true, prefs: await repo.setPrefs(req.pgId, req.tenantId, req.body) });
 });
 
 export const runEngine = asyncHandler(async (req, res) => {
-  const result = await runNotificationEngine(req.pgId);
-  res.json({ success: true, ...result });
+  res.json({ success: true, ...(await runNotificationEngine(req.pgId)) });
 });
 
 export const listDeliveryLog = asyncHandler(async (req, res) => {
-  const log = await NotificationLog.find({ pg: req.pgId }).sort({ createdAt: -1 }).limit(200);
-  res.json({ success: true, log });
+  res.json({ success: true, log: await repo.listLog(req.pgId) });
 });

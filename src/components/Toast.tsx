@@ -27,10 +27,10 @@ const icons: Record<ToastType, typeof CheckCircle2> = {
 };
 
 const colors: Record<ToastType, string> = {
-  success: 'bg-success-light text-success border-success/20',
-  error: 'bg-error-light text-error border-error/20',
-  info: 'bg-primary-50 text-primary border-primary/20',
-  warning: 'bg-warning-light text-warning border-warning/20',
+  success: 'text-success',
+  error: 'text-error',
+  info: 'text-primary',
+  warning: 'text-warning',
 };
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
@@ -53,13 +53,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           return (
             <div
               key={t.id}
-              className={`flex items-start gap-2 px-4 py-3 rounded-xl border bg-white shadow-glow animate-slide-up ${colors[t.type]}`}
+              className="flex items-start gap-2.5 px-4 py-3 rounded-xl border border-dark-200 bg-white shadow-glow animate-slide-up"
             >
-              <Icon size={18} className="shrink-0 mt-0.5" />
-              <div className="text-sm font-medium flex-1">{t.message}</div>
+              <Icon size={18} className={`shrink-0 mt-0.5 ${colors[t.type]}`} />
+              <div className="text-sm font-medium text-dark-800 flex-1">{t.message}</div>
               <button
                 onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
-                className="opacity-60 hover:opacity-100"
+                className="text-dark-400 hover:text-dark-700"
               >
                 <X size={14} />
               </button>

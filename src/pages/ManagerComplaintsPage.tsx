@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAppStore } from '../store/appStore';
-import { MessageSquare, Search, Inbox, Clock, CheckCircle2, Image as ImageIcon } from 'lucide-react';
+import { MessageSquare, Search, Inbox, Clock, CheckCircle2 } from 'lucide-react';
 import AppLayout from '../components/AppLayout';
 import Modal from '../components/Modal';
 import { ComplaintStatusBadge } from '../components/Badge';
@@ -9,7 +9,7 @@ import type { Complaint, ComplaintStatus } from '../types';
 
 const statusFlow: ComplaintStatus[] = ['Submitted', 'Seen', 'In Progress', 'Resolved'];
 
-export default function ManagerComplaintsPage() {
+export default function ManagerComplaintsPage({ role = 'manager' }: { role?: 'owner' | 'manager' }) {
   const { data, updateComplaintStatus } = useAppStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | ComplaintStatus>('All');
@@ -54,7 +54,7 @@ export default function ManagerComplaintsPage() {
   };
 
   return (
-    <AppLayout role="manager" title="Complaint Management">
+    <AppLayout role={role} title="Complaints" subtitle="Track and resolve issues raised by tenants.">
       <div className="space-y-6">
         {/* Counters */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -147,9 +147,6 @@ export default function ManagerComplaintsPage() {
                         <span>Tenant: <span className="text-dark-700 font-medium">{tenant?.fullName ?? 'Unknown'}</span></span>
                         <span>Room: <span className="text-dark-700 font-medium">{c.roomNumber}</span></span>
                         <span>Submitted: <span className="text-dark-700 font-medium">{formatDateTime(c.submittedAt)}</span></span>
-                        {c.imageUrl && (
-                          <span className="inline-flex items-center gap-1 text-primary"><ImageIcon size={12} /> Photo attached</span>
-                        )}
                         {c.remarks && <span className="text-dark-500">Remarks: <span className="text-dark-700">{c.remarks}</span></span>}
                       </div>
                     </div>
@@ -201,12 +198,6 @@ export default function ManagerComplaintsPage() {
                 <span className="font-medium text-dark-800">Tenant:</span> {tenantOf(selected.tenantId)?.fullName ?? 'Unknown'} • {tenantOf(selected.tenantId)?.mobile}
               </div>
               <div className="p-4 rounded-xl bg-background-200 text-sm text-dark-700">{selected.description}</div>
-              {selected.imageUrl && (
-                <div>
-                  <div className="text-xs font-medium text-dark-500 mb-2">Attached photo</div>
-                  <img src={selected.imageUrl} alt="Complaint" className="rounded-xl max-h-56 object-cover border border-background-300" />
-                </div>
-              )}
               {selected.remarks && (
                 <div className="p-3 rounded-xl bg-success-light text-success text-sm">
                   <strong>Latest remark:</strong> {selected.remarks}

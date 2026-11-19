@@ -13,7 +13,7 @@ Because both live on the **same origin**, there is no CORS setup and no
 
 ```
 Browser ──► https://aapka-pg.onrender.com/app/owner   → Express → dist/index.html (React SPA)
-        ──► https://aapka-pg.onrender.com/api/...     → Express → JSON API → MongoDB Atlas
+        ──► https://aapka-pg.onrender.com/api/...     → Express → JSON API → Neon
 ```
 
 | Render setting | Value |
@@ -28,18 +28,17 @@ Browser ──► https://aapka-pg.onrender.com/app/owner   → Express → dist
 
 ---
 
-## 1. Create the database (MongoDB Atlas, free)
+## 1. Create the database (Neon, free)
 
-1. Sign up at <https://www.mongodb.com/cloud/atlas/register> → **Create** a free **M0** cluster.
-2. **Database Access** → *Add New Database User* → username/password (avoid `@ : / ?` in the password or URL-encode it).
-3. **Network Access** → *Add IP Address* → **Allow access from anywhere** (`0.0.0.0/0`) — Render's IPs are dynamic.
-4. **Connect** → *Drivers* → copy the connection string and add the database name:
+1. Sign up at <https://neon.tech> → **Create project** (pick a region close to your Render region).
+2. On the project dashboard open **Connection Details**, tick **Pooled connection**, and copy the connection string:
 
    ```
-   mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/aapka_pg?retryWrites=true&w=majority
+   postgresql://USER:PASSWORD@ep-xxxx-pooler.REGION.aws.neon.tech/neondb?sslmode=require
    ```
 
-Keep this string handy — it goes into `MONGO_URI`.
+Keep this string handy — it goes into `DATABASE_URL`. There is nothing else to set up:
+the API creates every table on first start (`server/src/db/schema.sql`, idempotent).
 
 ---
 
@@ -61,7 +60,7 @@ Make sure `render.yaml` and `server/.env` is **not** committed (it is git-ignore
 
 1. Render dashboard → **New +** → **Blueprint**.
 2. Pick the repository → Render detects `render.yaml` → **Apply**.
-3. When prompted for `MONGO_URI`, paste your Atlas string.
+3. When prompted for `DATABASE_URL`, paste your Neon string.
 
 ### Option B — Manual Web Service
 
@@ -77,10 +76,9 @@ Make sure `render.yaml` and `server/.env` is **not** committed (it is git-ignore
 |---|---|
 | `NODE_ENV` | `production` |
 | `NODE_VERSION` | `22.12.0` |
-| `MONGO_URI` | your Atlas connection string |
+| `DATABASE_URL` | your Neon connection string |
 | `JWT_SECRET` | a long random string (or use Render's *Generate*) |
 | `JWT_EXPIRES_IN` | `7d` |
-| `DEMO_OTP` | `1234` |
 
 4. **Create Web Service**. First build takes ~2–4 minutes.
 
@@ -90,13 +88,13 @@ Make sure `render.yaml` and `server/.env` is **not** committed (it is git-ignore
 
 ## 4. Seed the demo data
 
-The app is empty until seeded. Run the seeder **once** against Atlas.
+The app starts empty and creates its tables automatically. Seeding is optional — it loads a demo PG. Run the seeder **once** against Neon.
 
 **From your machine (most reliable):**
 
 ```powershell
 cd server
-$env:MONGO_URI="mongodb+srv://USER:PASS@cluster0.xxxxx.mongodb.net/aapka_pg?retryWrites=true&w=majority"
+$env:DATABASE_URL="postgresql://USER:PASS@ep-xxxx-pooler.REGION.aws.neon.tech/neondb?sslmode=require"
 $env:JWT_SECRET="any-value"
 npm run seed
 ```
@@ -104,16 +102,16 @@ npm run seed
 ```bash
 # macOS / Linux
 cd server
-MONGO_URI="mongodb+srv://..." JWT_SECRET="any" npm run seed
+DATABASE_URL="postgresql://..." JWT_SECRET="any" npm run seed
 ```
 
-A shell-set `MONGO_URI` takes precedence over `server/.env`.
+A shell-set `DATABASE_URL` takes precedence over `server/.env`.
 
 **Alternative — Render Shell:** open your service → **Shell** → `npm run seed`
 (available on paid instances; on free instances use the local method above).
 
 Skip seeding entirely if you want a clean production database — you can then
-sign up your first PG owner at `https://<your-service>.onrender.com/subscribe`.
+register your first PG owner at `https://<your-service>.onrender.com/register`.
 
 ---
 
@@ -126,11 +124,11 @@ curl https://<your-service>.onrender.com/api/health
 
 Then open `https://<your-service>.onrender.com` and log in:
 
-| Role | Login | Password / OTP |
+| Role | Login | Password |
 |---|---|---|
 | Owner | `shreeganesh_pg_4821` | `demo1234` |
 | Manager | `manager@shreeganeshpg.in` | `demo1234` |
-| Tenant | `9876500011` | OTP `1234` |
+| Tenant | `9876500011` | `demo1234` |
 
 ---
 
@@ -140,7 +138,7 @@ Reproduce exactly what Render runs:
 
 ```powershell
 npm ci; npm ci --prefix server; npm run build
-$env:NODE_ENV="production"; $env:PORT="5050"; $env:MONGO_URI="mongodb://127.0.0.1:27017/aapka_pg"; $env:JWT_SECRET="local"
+$env:NODE_ENV="production"; $env:PORT="5050"; $env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/aapka_pg"; $env:JWT_SECRET="local"
 npm run start
 # open http://localhost:5050
 ```
@@ -175,9 +173,9 @@ npm ci --include=dev && npm ci --prefix server && npm run build
 `NODE_ENV=production` should still be set **as a runtime env var** — it only
 must not suppress dev deps during the build.
 
-### `Cannot connect to MongoDB` / connection timeout
+### `Failed to start server: ...` / connection timeout
 
-Atlas IP allowlist. *Network Access* → add `0.0.0.0/0`.
+Check `DATABASE_URL` is the full Neon string including `?sslmode=require`. A suspended Neon compute needs a few seconds to wake; the API waits up to 15 s for it.
 
 ### `EADDRINUSE`
 
@@ -195,8 +193,9 @@ page. Check the build logs for a failure.
 - **Free tier sleeps** after ~15 min idle; the first request afterwards takes ~30–60 s to wake.
 - **`dist/` must exist** for the SPA to be served. If you see "The web app has not been built yet", the build step failed — check the Render build logs.
 - **Node version**: Vite 8 needs Node `^20.19.0 || >=22.12.0`. Keep `NODE_VERSION=22.12.0`.
-- **Secrets**: `JWT_SECRET` and `MONGO_URI` live only in Render env vars; `server/.env` is git-ignored and never deployed.
+- **Secrets**: `JWT_SECRET` and `DATABASE_URL` live only in Render env vars; `server/.env` is git-ignored and never deployed.
 - **Custom domain**: add it in Render → *Settings* → *Custom Domains*; no code change needed.
 - **CORS**: not required for this single-service setup. Only set `CORS_ORIGIN` if you later host the SPA elsewhere.
+- **Documents**: uploaded files (max 5 MB each) are stored in Neon, not on Render's disk, so they survive restarts and redeploys.
 - **Sessions**: JWTs are stored in `localStorage`; rotating `JWT_SECRET` logs everyone out.
 - **Splitting later**: to separate frontend/backend into two Render services, build the SPA with `VITE_API_URL=https://<api-host>` and set `CORS_ORIGIN=https://<web-host>` on the API.

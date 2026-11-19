@@ -1,382 +1,180 @@
-import bcrypt from 'bcryptjs';
-import mongoose, { connectDB } from '../config/db.js';
-import {
-  PgAccount,
-  Workspace,
-  Manager,
-  TenantUser,
-  Room,
-  Bed,
-  Tenant,
-  Membership,
-  Payment,
-  MeterReading,
-  Complaint,
-  FoodMenuItem,
-  FoodRating,
-  MealOptOut,
-  Notification,
-  NotificationLog,
-  NotificationPref,
-  AdmissionRequest,
-  PendingRegistration,
-} from '../models/index.js';
+// Demo data. `npm run seed` loads it once; `npm run seed:reset` wipes and reloads.
+import { connectDB, disconnectDB, query, one, pool } from '../db/index.js';
+import { hashPassword } from '../utils/password.js';
 import { runNotificationEngine } from '../services/notificationEngine.js';
 import logger from '../utils/logger.js';
 import * as seed from './data.js';
 
-const todayISO = () => new Date().toISOString().split('T')[0];
-const daysAgoISO = (n) => new Date(Date.now() - n * 86400000).toISOString();
-const daysAheadISO = (n) => new Date(Date.now() + n * 86400000).toISOString().split('T')[0];
-const daysAgoDate = (n) => daysAgoISO(n).split('T')[0];
-
-const currentMonth = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
-const previousMonth = (back = 1) => {
+const isoDay = (offsetDays = 0) => new Date(Date.now() + offsetDays * 86400000).toISOString().split('T')[0];
+const month = (back = 0) => {
   const d = new Date();
   d.setDate(1);
   d.setMonth(d.getMonth() - back);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
-const dayInMonth = (yyyyMm, day) => `${yyyyMm}-${String(day).padStart(2, '0')}`;
 
-const ALL_MODELS = [
-  PgAccount, Workspace, Manager, TenantUser, Room, Bed, Tenant, Membership, Payment,
-  MeterReading, Complaint, FoodMenuItem, FoodRating, MealOptOut, Notification,
-  NotificationLog, NotificationPref, AdmissionRequest, PendingRegistration,
+// Smallest valid PDF / PNG so the demo documents open in a viewer.
+const demoPdf = (text) =>
+  Buffer.from(
+    `%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n` +
+      `3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 120]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n` +
+      `4 0 obj<</Length ${text.length + 38}>>stream\nBT /F1 14 Tf 20 60 Td (${text}) Tj ET\nendstream endobj\n` +
+      `5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R/Size 6>>\n%%EOF`
+  );
+const DEMO_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+const TABLES = [
+  'audit_logs', 'notification_logs', 'notification_prefs', 'notifications', 'food_ratings', 'meal_opt_outs',
+  'food_menu_items', 'complaints', 'meter_readings', 'documents', 'tenants', 'beds', 'rooms', 'workspace_settings', 'managers', 'pg_accounts',
 ];
 
-const reset = async () => {
-  for (const model of ALL_MODELS) await model.deleteMany({});
-  logger.info('Cleared all collections');
-};
-
 async function seedAll() {
-  const resetArg = process.argv.includes('--reset');
-  const exists = await PgAccount.exists({ pgUsername: seed.owner.pgUsername });
-
-  if (exists && !resetArg) {
-    logger.info('Seed data already present. Use `npm run seed:reset` to re-seed.');
-    return;
+  const reset = process.argv.includes('--reset');
+  const exists = await one('SELECT 1 AS x FROM pg_accounts WHERE pg_username = $1', [seed.owner.pgUsername]);
+  if (exists && !reset) return logger.info('Seed data already present. Use `npm run seed:reset` to re-seed.');
+  if (reset) {
+    await pool.query(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`);
+    logger.info('Cleared all tables');
   }
-  if (resetArg) await reset();
 
-  const hash = await bcrypt.hash(seed.DEMO_PASSWORD, 10);
+  const hash = await hashPassword(seed.DEMO_PASSWORD);
 
-  // ---------- Owner + PG account ----------
-  const ownerAccount = await PgAccount.create({ ...seed.owner, passwordHash: hash, isActive: true, isDiscoverable: true, showAvailableBeds: true });
-  const secondOwner = await PgAccount.create({ ...seed.secondOwner, passwordHash: hash, isActive: true, isDiscoverable: true, showAvailableBeds: true });
+  const makePg = async (o, settings) => {
+    const pg = await one(
+      `INSERT INTO pg_accounts (pg_name, pg_username, description, address, city, state, pin_code, pg_type, owner_name, owner_email, owner_mobile, password_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [o.pgName, o.pgUsername, o.description, o.address, o.city, o.state, o.pinCode, o.pgType, o.ownerName, o.ownerEmail, o.ownerMobile, hash]
+    );
+    await query(
+      `INSERT INTO workspace_settings (pg_id, name, address, city, contact_email, contact_phone, owner_name, electricity_rate)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [pg.id, settings.name, settings.address, settings.city, settings.contactEmail, settings.contactPhone, settings.ownerName, settings.electricityRate]
+    );
+    return pg.id;
+  };
 
-  // ---------- Workspaces (singletons: settings + reminder schedule + subscription) ----------
-  const periodEnd = new Date();
-  periodEnd.setDate(periodEnd.getDate() + 7);
-  const periodEndISO = periodEnd.toISOString().split('T')[0];
-  const startedAt = new Date(periodEnd);
-  startedAt.setMonth(startedAt.getMonth() - 1);
-  const startedAtISO = startedAt.toISOString().split('T')[0];
-
-  await Workspace.create({
-    pg: ownerAccount._id,
-    settings: seed.settings,
-    reminderSchedule: seed.reminderSchedule,
-    subscription: {
-      planId: 'growth',
-      status: 'Active',
-      cycle: 'monthly',
-      startedAt: startedAtISO,
-      currentPeriodEnd: periodEndISO,
-      amountPaid: 1998,
-      autoRenew: true,
-      invoices: [
-        { number: 'APG-2026-0001', date: startedAtISO, planId: 'growth', cycle: 'monthly', amount: 999, status: 'Paid', method: 'UPI', paidAt: `${startedAtISO}T10:00:00`, reference: 'SIM/UPI/8812' },
-        { number: 'APG-2026-0002', date: todayISO(), planId: 'growth', cycle: 'monthly', amount: 999, status: 'Paid', method: 'UPI', paidAt: `${todayISO()}T10:00:00`, reference: 'SIM/UPI/9054' },
-      ],
-    },
+  const pgId = await makePg(seed.owner, seed.settings);
+  const pg2 = await makePg(seed.secondOwner, {
+    name: seed.secondOwner.pgName, address: seed.secondOwner.address, city: seed.secondOwner.city,
+    contactEmail: seed.secondOwner.ownerEmail, contactPhone: seed.secondOwner.ownerMobile, ownerName: seed.secondOwner.ownerName,
+    electricityRate: 9,
   });
 
-  await Workspace.create({
-    pg: secondOwner._id,
-    settings: { name: seed.secondOwner.pgName, city: seed.secondOwner.city, ownerName: seed.secondOwner.ownerName, electricityRate: 9, foodCharge: 1200, timezone: 'Asia/Kolkata', channels: { whatsapp: true, sms: true, email: true } },
-    reminderSchedule: seed.reminderSchedule,
-    subscription: { planId: 'starter', status: 'Active', cycle: 'monthly', startedAt: startedAtISO, currentPeriodEnd: periodEndISO, amountPaid: 499, autoRenew: true, invoices: [] },
-  });
-
-  // ---------- Manager ----------
-  await Manager.create({ ...seed.manager, pg: ownerAccount._id, passwordHash: hash });
+  await query('INSERT INTO managers (pg_id, full_name, email, mobile, password_hash) VALUES ($1,$2,$3,$4,$5)', [
+    pgId, seed.manager.fullName, seed.manager.email, seed.manager.mobile, hash,
+  ]);
 
   // ---------- Rooms + beds ----------
-  const roomDocs = [];
+  const roomIds = new Map();
+  const bedIds = new Map(); // "101-1" -> bed id
   for (const r of seed.rooms) {
-    const room = await Room.create({ pg: ownerAccount._id, ...r });
-    roomDocs.push(room);
-    const beds = [];
-    for (let i = 1; i <= r.totalBeds; i++) beds.push({ pg: ownerAccount._id, room: room._id, bedNumber: i, status: 'vacant' });
-    await Bed.insertMany(beds);
-  }
-  const roomByNumber = new Map(roomDocs.map((r) => [r.roomNumber, r]));
-
-  // ---------- Tenants + tenant users + memberships + prefs ----------
-  const tenantByKey = new Map(); // key: roomNo-bedNumber -> Tenant
-  const tenantByName = new Map();
-  const curM = currentMonth();
-  const lastM = previousMonth(1);
-  const foodCharge = seed.settings.foodCharge;
-  const rate = seed.settings.electricityRate;
-
-  const tenantUsers = [];
-  for (const t of seed.tenants) {
-    const joiningDate = daysAgoDate(t.joiningDaysAgo);
-    const room = roomByNumber.get(t.room);
-    const tenant = await Tenant.create({
-      pg: ownerAccount._id,
-      fullName: t.fullName,
-      mobile: t.mobile,
-      email: t.email,
-      emergencyContact: t.emergencyContact,
-      room: room._id,
-      bedNumber: t.bedNumber,
-      monthlyRent: t.monthlyRent,
-      securityDeposit: t.securityDeposit,
-      joiningDate,
-      policeVerification: t.policeVerification,
-      status: t.status,
-      noticeDate: t.status === 'Notice Period' ? daysAgoDate(6) : undefined,
-    });
-
-    const user = await TenantUser.create({ fullName: t.fullName, mobile: t.mobile, email: t.email, passwordHash: hash });
-
-    const bed = await Bed.findOneAndUpdate(
-      { room: room._id, bedNumber: t.bedNumber },
-      { $set: { status: t.status === 'Notice Period' ? 'notice' : 'occupied', tenant: tenant._id } }
+    const room = await one(
+      'INSERT INTO rooms (pg_id, room_number, floor, sharing_type, attached_bathroom) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+      [pgId, r.roomNumber, r.floor, r.sharingType, r.attachedBathroom]
     );
-
-    await Membership.create({
-      pg: ownerAccount._id,
-      tenantUser: user._id,
-      tenant: tenant._id,
-      room: room._id,
-      bed: bed._id,
-      status: 'Active',
-      joiningDate,
-      monthlyRent: t.monthlyRent,
-      securityDeposit: t.securityDeposit,
-      approvedBy: seed.owner.ownerName,
-      approvedAt: `${joiningDate}T09:00:00`,
-    });
-
-    await NotificationPref.create({ pg: ownerAccount._id, tenant: tenant._id, whatsapp: true, sms: true, email: true });
-
-    tenantByKey.set(`${t.room}-${t.bedNumber}`, tenant);
-    tenantByName.set(t.fullName, tenant);
-    tenantUsers.push(user);
-
-    // ---------- Payments per tenant ----------
-    const total = t.monthlyRent + foodCharge;
-    await Payment.create([
-      { pg: ownerAccount._id, tenant: tenant._id, type: 'Deposit', month: joiningDate.slice(0, 7), amount: t.securityDeposit, method: 'UPI', status: 'Paid', paidAt: `${joiningDate}T10:00:00`, dueDate: joiningDate },
-      { pg: ownerAccount._id, tenant: tenant._id, type: 'Rent', month: lastM, amount: total, method: 'UPI', status: 'Paid', paidAt: `${dayInMonth(lastM, 4)}T11:30:00`, dueDate: dayInMonth(lastM, 5) },
-      { pg: ownerAccount._id, tenant: tenant._id, type: 'Rent', month: curM, amount: total, method: 'UPI', status: 'Pending', dueDate: dayInMonth(curM, 5) },
-    ]);
-  }
-
-  // Override a few current-month rent statuses to show the full lifecycle.
-  const paidIdx = ['Amit Kumar', 'Priya Nair'];
-  const overdueIdx = ['Vikram Singh'];
-  for (const name of paidIdx) {
-    await Payment.updateOne({ tenant: tenantByName.get(name)._id, month: curM, type: 'Rent' }, { $set: { status: 'Paid', paidAt: daysAgoISO(2) } });
-  }
-  for (const name of overdueIdx) {
-    await Payment.updateOne({ tenant: tenantByName.get(name)._id, month: curM, type: 'Rent' }, { $set: { status: 'Overdue', dueDate: daysAgoDate(10) } });
-  }
-
-  // ---------- Meter readings (last month published, current month draft) ----------
-  const readingSpecs = [
-    { room: '101', lastPrev: 4186, lastUnits: 214, curUnits: 232 },
-    { room: '102', lastPrev: 3021, lastUnits: 168, curUnits: 190 },
-    { room: '103', lastPrev: 2210, lastUnits: 141, curUnits: 128 },
-    { room: '104', lastPrev: 5544, lastUnits: 305, curUnits: 274 },
-    { room: '201', lastPrev: 1875, lastUnits: 122, curUnits: 118 },
-    { room: '202', lastPrev: 2688, lastUnits: 176, curUnits: 201 },
-    { room: '301', lastPrev: 4102, lastUnits: 251, curUnits: 238 },
-  ];
-
-  const occupantsForRoom = (roomNumber) => seed.tenants.filter((t) => t.room === roomNumber).length;
-
-  for (const spec of readingSpecs) {
-    const room = roomByNumber.get(spec.room);
-    const occupants = occupantsForRoom(spec.room);
-    const lastTotal = spec.lastUnits * rate;
-    const lastReading = {
-      pg: ownerAccount._id,
-      room: room._id,
-      month: lastM,
-      previousReading: spec.lastPrev,
-      currentReading: spec.lastPrev + spec.lastUnits,
-      units: spec.lastUnits,
-      ratePerUnit: rate,
-      totalAmount: lastTotal,
-      occupants,
-      perTenantAmount: Math.round(lastTotal / Math.max(1, occupants)),
-      recordedAt: `${dayInMonth(lastM, 28)}T10:00:00`,
-      published: true,
-    };
-    await MeterReading.create(lastReading);
-
-    const curTotal = spec.curUnits * rate;
-    await MeterReading.create({
-      pg: ownerAccount._id,
-      room: room._id,
-      month: curM,
-      previousReading: lastReading.currentReading,
-      currentReading: lastReading.currentReading + spec.curUnits,
-      units: spec.curUnits,
-      ratePerUnit: rate,
-      totalAmount: curTotal,
-      occupants,
-      perTenantAmount: Math.round(curTotal / Math.max(1, occupants)),
-      recordedAt: daysAgoISO(2),
-      published: false,
-    });
-
-    // Electricity payments for last month (published): paid for all but Sneha (t-003).
-    for (const t of seed.tenants.filter((x) => x.room === spec.room)) {
-      if (t.fullName === 'Sneha Patil') {
-        await Payment.create({ pg: ownerAccount._id, tenant: tenantByName.get(t.fullName)._id, type: 'Electricity', month: lastM, amount: lastReading.perTenantAmount, method: 'UPI', status: 'Overdue', dueDate: dayInMonth(lastM, 28) });
-      } else {
-        await Payment.create({ pg: ownerAccount._id, tenant: tenantByName.get(t.fullName)._id, type: 'Electricity', month: lastM, amount: lastReading.perTenantAmount, method: 'UPI', status: 'Paid', paidAt: `${dayInMonth(lastM, 29)}T12:00:00`, dueDate: dayInMonth(lastM, 28) });
-      }
+    roomIds.set(r.roomNumber, room.id);
+    for (let n = 1; n <= r.beds; n++) {
+      const bed = await one('INSERT INTO beds (pg_id, room_id, bed_number, rent, vacant_since) VALUES ($1,$2,$3,$4,$5) RETURNING id', [
+        pgId, room.id, n, r.rent, isoDay(-20),
+      ]);
+      bedIds.set(`${r.roomNumber}-${n}`, bed.id);
     }
+  }
+  const r2 = await one('INSERT INTO rooms (pg_id, room_number, floor, sharing_type) VALUES ($1,$2,$3,$4) RETURNING id', [pg2, 'A1', 0, 2]);
+  for (const n of [1, 2]) await query('INSERT INTO beds (pg_id, room_id, bed_number, rent) VALUES ($1,$2,$3,$4)', [pg2, r2.id, n, 8000]);
+
+  // ---------- Tenants (owner-created accounts: mobile + password) ----------
+  const tenantIds = new Map();
+  for (const t of seed.tenants) {
+    const bedId = bedIds.get(`${t.room}-${t.bedNumber}`);
+    const row = await one(
+      `INSERT INTO tenants (pg_id, bed_id, full_name, mobile, email, emergency_contact, password_hash, created_by,
+         monthly_rent, security_deposit, joining_date, police_verification, status, notice_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      [
+        pgId, bedId, t.fullName, t.mobile, t.email, t.emergencyContact, hash, pgId, t.monthlyRent, t.securityDeposit,
+        isoDay(-t.joiningDaysAgo), t.policeVerification, t.status, t.status === 'Notice Period' ? isoDay(-6) : null,
+      ]
+    );
+    tenantIds.set(t.fullName, row.id);
+    await query('UPDATE beds SET vacant_since = NULL WHERE id = $1', [bedId]);
+    await query('INSERT INTO notification_prefs (tenant_id, pg_id) VALUES ($1,$2)', [row.id, pgId]);
+  }
+
+  // ---------- Documents ----------
+  const addDoc = (tenantName, type, title, fileName, mimeType, data) =>
+    query(
+      `INSERT INTO documents (pg_id, tenant_id, type, title, file_name, mime_type, size, uploaded_by_id, uploaded_by_role, uploaded_by_name, data)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'owner',$9,$10)`,
+      [pgId, tenantIds.get(tenantName), type, title, fileName, mimeType, data.length, pgId, seed.owner.ownerName, data]
+    );
+  await addDoc('Amit Kumar', 'ID Proof', 'Aadhaar card', 'aadhaar-amit.pdf', 'application/pdf', demoPdf('Aadhaar - Amit Kumar (demo)'));
+  await addDoc('Amit Kumar', 'Rental Agreement', 'Rental agreement 2026', 'agreement-amit.pdf', 'application/pdf', demoPdf('Rental agreement - Amit Kumar (demo)'));
+  await addDoc('Amit Kumar', 'Photograph', 'Passport photo', 'amit.png', 'image/png', DEMO_PNG);
+  await addDoc('Sneha Patil', 'ID Proof', 'PAN card', 'pan-sneha.pdf', 'application/pdf', demoPdf('PAN - Sneha Patil (demo)'));
+
+  // ---------- Electricity readings (last month published, this month draft) ----------
+  const rate = seed.settings.electricityRate;
+  const specs = [
+    ['101', 4186, 214, 232], ['102', 3021, 168, 190], ['103', 2210, 141, 128], ['104', 5544, 305, 274],
+    ['201', 1875, 122, 118], ['202', 2688, 176, 201], ['301', 4102, 251, 238],
+  ];
+  for (const [room, prev, lastUnits, curUnits] of specs) {
+    const occupants = Math.max(1, seed.tenants.filter((t) => t.room === room).length);
+    const insert = (m, previous, units, published) =>
+      query(
+        `INSERT INTO meter_readings (pg_id, room_id, month, previous_reading, current_reading, units, rate_per_unit, total_amount, occupants, per_tenant_amount, published)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [pgId, roomIds.get(room), m, previous, previous + units, units, rate, units * rate, occupants, Math.round((units * rate) / occupants), published]
+      );
+    await insert(month(1), prev, lastUnits, true);
+    await insert(month(0), prev + lastUnits, curUnits, false);
   }
 
   // ---------- Complaints ----------
   for (const c of seed.complaints) {
-    const tenant = tenantByName.get(c.tenant);
-    await Complaint.create({
-      pg: ownerAccount._id,
-      tenant: tenant._id,
-      category: c.category,
-      description: c.description,
-      roomNumber: c.roomNumber,
-      status: c.status,
-      submittedAt: c.hoursAgo ? new Date(Date.now() - c.hoursAgo * 3600000).toISOString() : daysAgoISO(c.daysAgo),
-      resolvedAt: c.status === 'Resolved' ? daysAgoISO(c.daysAgo - 1) : undefined,
-      remarks: c.remarks,
-    });
+    const submitted = c.hoursAgo ? new Date(Date.now() - c.hoursAgo * 3600000) : new Date(Date.now() - c.daysAgo * 86400000);
+    await query(
+      `INSERT INTO complaints (pg_id, tenant_id, category, description, room_number, status, remarks, submitted_at, resolved_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [pgId, tenantIds.get(c.tenant), c.category, c.description, c.roomNumber, c.status, c.remarks ?? '', submitted, c.status === 'Resolved' ? new Date(submitted.getTime() + 86400000) : null]
+    );
   }
 
-  // ---------- Food menu ----------
-  const days = Object.keys(seed.menuData);
-  for (const day of days) {
+  // ---------- Food ----------
+  for (const [day, meals] of Object.entries(seed.menuData)) {
     for (const mealType of ['Breakfast', 'Lunch', 'Dinner']) {
-      await FoodMenuItem.create({
-        pg: ownerAccount._id,
-        day,
-        mealType,
-        items: seed.menuData[day][mealType.toLowerCase()],
-        timing: seed.mealTimings[mealType],
-      });
+      await query('INSERT INTO food_menu_items (pg_id, day, meal_type, items, timing) VALUES ($1,$2,$3,$4,$5)', [
+        pgId, day, mealType, meals[mealType.toLowerCase()], seed.mealTimings[mealType],
+      ]);
     }
   }
-
-  // ---------- Food ratings & opt-outs ----------
-  await FoodRating.create([
-    { pg: ownerAccount._id, tenant: tenantByName.get('Amit Kumar')._id, date: daysAgoDate(1), mealType: 'Lunch', rating: 4, review: 'Rajma was great.' },
-    { pg: ownerAccount._id, tenant: tenantByName.get('Rohan Verma')._id, date: daysAgoDate(2), mealType: 'Dinner', rating: 5 },
-    { pg: ownerAccount._id, tenant: tenantByName.get('Priya Nair')._id, date: daysAgoDate(1), mealType: 'Breakfast', rating: 3 },
-  ]);
-  await MealOptOut.create([
-    { pg: ownerAccount._id, tenant: tenantByName.get('Amit Kumar')._id, date: todayISO(), mealType: 'Dinner' },
-    { pg: ownerAccount._id, tenant: tenantByName.get('Rohan Verma')._id, date: todayISO(), mealType: 'Lunch' },
+  const rating = (name, daysAgo, mealType, stars, review = '') =>
+    query('INSERT INTO food_ratings (pg_id, tenant_id, date, meal_type, rating, review) VALUES ($1,$2,$3,$4,$5,$6)', [pgId, tenantIds.get(name), isoDay(-daysAgo), mealType, stars, review]);
+  await rating('Amit Kumar', 1, 'Lunch', 4, 'Rajma was great.');
+  await rating('Rohan Verma', 2, 'Dinner', 5);
+  await rating('Priya Nair', 1, 'Breakfast', 3);
+  await query('INSERT INTO meal_opt_outs (pg_id, tenant_id, date, meal_type) VALUES ($1,$2,$3,$4), ($1,$5,$3,$6)', [
+    pgId, tenantIds.get('Amit Kumar'), isoDay(0), 'Dinner', tenantIds.get('Rohan Verma'), 'Lunch',
   ]);
 
-  // ---------- Admission requests (Rahul pending, Manish rejected) ----------
-  const rahul = await TenantUser.create({ fullName: 'Rahul Sharma', mobile: '9123450001', email: 'rahul.sharma@example.com', passwordHash: hash });
-  const manish = await TenantUser.create({ fullName: 'Manish Tiwari', mobile: '9123450002', email: 'manish.tiwari@example.com', passwordHash: hash });
+  await runNotificationEngine(pgId);
 
-  await AdmissionRequest.create({
-    pg: ownerAccount._id,
-    requestId: 'AR-2026-0001',
-    tenantUser: rahul._id,
-    fullName: 'Rahul Sharma',
-    mobile: '9123450001',
-    email: 'rahul.sharma@example.com',
-    emergencyContact: '9123450099',
-    preferredJoiningDate: daysAheadISO(7),
-    preferredRoomType: '2-sharing',
-    occupants: 1,
-    additionalMessage: 'I am a software engineer joining a company in Baner next week. Looking for a long-term stay.',
-    documents: { idProof: 'aadhaar-rahul.pdf', photograph: 'rahul-photo.jpg' },
-    status: 'Pending',
-  });
-  await AdmissionRequest.create({
-    pg: secondOwner._id,
-    requestId: 'AR-2026-0002',
-    tenantUser: rahul._id,
-    fullName: 'Rahul Sharma',
-    mobile: '9123450001',
-    email: 'rahul.sharma@example.com',
-    emergencyContact: '9123450099',
-    preferredJoiningDate: daysAheadISO(10),
-    preferredRoomType: 'Any',
-    occupants: 1,
-    additionalMessage: 'Also exploring options in Andheri. Please let me know about availability.',
-    status: 'Pending',
-  });
-  await AdmissionRequest.create({
-    pg: ownerAccount._id,
-    requestId: 'AR-2026-0003',
-    tenantUser: manish._id,
-    fullName: 'Manish Tiwari',
-    mobile: '9123450002',
-    email: 'manish.tiwari@example.com',
-    emergencyContact: '9123450088',
-    preferredJoiningDate: daysAgoDate(1),
-    preferredRoomType: 'Single',
-    occupants: 1,
-    additionalMessage: 'Looking for a single occupancy room.',
-    status: 'Rejected',
-    rejectionReason: 'No beds available',
-    reviewedBy: seed.owner.ownerName,
-    reviewedAt: daysAgoISO(3),
-  });
-
-  // ---------- Seed notifications + delivery log ----------
-  const notifs = [
-    { userId: String(tenantByName.get('Amit Kumar')._id), userRole: 'tenant', title: 'Complaint Resolved', message: 'Your AC complaint has been resolved. Technician refilled the gas.', type: 'success', read: true, createdAt: daysAgoISO(5), link: '/app/tenant/complaints', category: 'Complaint', dedupeKey: 'seed-n-001' },
-    { userId: String(tenantByName.get('Amit Kumar')._id), userRole: 'tenant', title: 'Rent Reminder', message: 'Hi Amit, your rent for this month is due on the 5th. Please pay on time.', type: 'warning', read: false, createdAt: daysAgoISO(2), link: '/app/tenant/rent', category: 'Rent', dedupeKey: 'seed-n-002' },
-    { userId: 'all', userRole: 'manager', title: 'New Complaint', message: 'Vikram Singh submitted a Cleaning complaint in Room 104.', type: 'info', read: false, createdAt: new Date(Date.now() - 5 * 3600000).toISOString(), link: '/app/manager/complaints', category: 'Complaint', dedupeKey: 'seed-n-003' },
-    { userId: 'all', userRole: 'manager', title: 'New Complaint', message: 'Priya Nair submitted an Electrical complaint in Room 103.', type: 'info', read: false, createdAt: new Date(Date.now() - 1 * 3600000).toISOString(), link: '/app/manager/complaints', category: 'Complaint', dedupeKey: 'seed-n-004' },
-    { userId: 'all', userRole: 'owner', title: 'Payment Received', message: 'Sneha Patil made a rent payment of ₹7,500.', type: 'success', read: false, createdAt: daysAgoISO(2), link: '/app/owner/finance', category: 'Rent', dedupeKey: 'seed-n-005' },
-    { userId: 'all', userRole: 'owner', title: 'Notice Period Started', message: 'Neha Joshi (Room 201, Bed 1) has started her notice period.', type: 'warning', read: true, createdAt: daysAgoISO(6), link: '/app/owner/beds', category: 'Bed', dedupeKey: 'seed-n-006' },
-  ];
-  for (const n of notifs) await Notification.create({ pg: ownerAccount._id, ...n });
-
-  await NotificationLog.create([
-    { pg: ownerAccount._id, dedupeKey: 'seed-n-002', notificationId: 'seed-n-002', category: 'Rent', title: 'Rent Reminder', recipient: 't-001', recipientRole: 'tenant', channel: 'In-App', status: 'Delivered', attempts: 1, createdAt: daysAgoISO(2) },
-    { pg: ownerAccount._id, dedupeKey: 'seed-n-002', notificationId: 'seed-n-002', category: 'Rent', title: 'Rent Reminder', recipient: 't-001', recipientRole: 'tenant', channel: 'WhatsApp', status: 'Simulated', attempts: 1, createdAt: daysAgoISO(2), note: 'Simulated delivery – no real provider connected' },
-    { pg: ownerAccount._id, dedupeKey: 'seed-n-005', notificationId: 'seed-n-005', category: 'Rent', title: 'Payment Received', recipient: 'PG Owner', recipientRole: 'owner', channel: 'Email', status: 'Simulated', attempts: 1, createdAt: daysAgoISO(2), note: 'Simulated delivery – no real provider connected' },
-  ]);
-
-  // ---------- Run the notification engine once (idempotent) ----------
-  await runNotificationEngine(ownerAccount._id);
-
-  logger.info('Seed complete!');
-  logger.info('Demo credentials (password: demo1234, tenant OTP: 1234):');
-  logger.info(`  Owner login : username ${seed.owner.pgUsername} / demo1234`);
-  logger.info(`  Manager login: ${seed.manager.email} / demo1234`);
-  logger.info(`  Tenant login: mobile ${seed.tenants[0].mobile} (Amit Kumar) / OTP 1234`);
+  logger.info('Seed complete! Demo credentials (password: demo1234):');
+  logger.info(`  Owner   : username ${seed.owner.pgUsername}  (or ${seed.owner.ownerEmail})`);
+  logger.info(`  Manager : ${seed.manager.email}`);
+  logger.info(`  Tenant  : mobile ${seed.tenants[0].mobile} (Amit Kumar)`);
 }
 
 connectDB()
   .then(seedAll)
-  .then(async () => {
-    await mongoose.disconnect();
-    process.exit(0);
-  })
+  .then(() => disconnectDB())
+  .then(() => process.exit(0))
   .catch(async (err) => {
     logger.error(err.stack || err.message);
-    await mongoose.disconnect();
+    await disconnectDB().catch(() => {});
     process.exit(1);
   });

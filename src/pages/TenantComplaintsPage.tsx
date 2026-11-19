@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useAppStore } from '../store/appStore';
-import { MessageSquare, Upload, X, Image as ImageIcon } from 'lucide-react';
+import { MessageSquare } from 'lucide-react';
 import AppLayout from '../components/AppLayout';
 import { ComplaintStatusBadge } from '../components/Badge';
 import { useToast } from '../components/Toast';
@@ -17,19 +17,15 @@ const categories: { name: ComplaintCategory; icon: string }[] = [
   { name: 'Other', icon: '📦' },
 ];
 
-const MAX_IMAGE_BYTES = 1024 * 1024; // 1 MB demo storage limit
-
 export default function TenantComplaintsPage() {
   const { data, addComplaint } = useAppStore();
   const toast = useToast();
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const tenant = data.tenants.find((t) => t.id === data.activeTenantId);
-  const room = data.rooms.find((r) => r.id === tenant?.roomId);
 
   const [category, setCategory] = useState<ComplaintCategory | ''>('');
   const [description, setDescription] = useState('');
-  const [imageUrl, setImageUrl] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   if (!tenant) {
@@ -40,25 +36,7 @@ export default function TenantComplaintsPage() {
     );
   }
 
-  const handleFile = (file: File | undefined) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setError('Please choose an image file (JPEG or PNG).');
-      return;
-    }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setError('Image is too large. Please choose one under 1 MB (demo storage limit).');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImageUrl(reader.result as string);
-      setError('');
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!category) {
       setError('Please select a complaint category.');
@@ -68,19 +46,17 @@ export default function TenantComplaintsPage() {
       setError('Please describe the issue in at least 10 characters.');
       return;
     }
-    addComplaint({
-      tenantId: tenant.id,
-      category,
-      description: description.trim(),
-      imageUrl,
-      roomNumber: room?.roomNumber ?? '—',
-    });
+    setBusy(true);
+    const res = await addComplaint({ category, description: description.trim() });
+    setBusy(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
     toast.show('Complaint submitted! Your manager has been notified.', 'success');
     setCategory('');
     setDescription('');
-    setImageUrl(undefined);
     setError('');
-    if (fileRef.current) fileRef.current.value = '';
   };
 
   const myComplaints = data.complaints
@@ -142,7 +118,7 @@ export default function TenantComplaintsPage() {
                 <label className="block text-sm font-medium text-dark-700 mb-2">
                   Room Number <span className="text-dark-400 font-normal">(auto-filled)</span>
                 </label>
-                <input type="text" value={room?.roomNumber ?? ''} disabled className="input-field bg-background-200 cursor-not-allowed" />
+                <input type="text" value={tenant.roomNumber ?? ''} disabled className="input-field bg-background-200 cursor-not-allowed" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-dark-700 mb-2">Date & Time</label>
@@ -163,50 +139,10 @@ export default function TenantComplaintsPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-dark-700 mb-2">Upload Photo (Optional)</label>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => handleFile(e.target.files?.[0])}
-              />
-              {imageUrl ? (
-                <div className="flex items-center gap-4 p-3 rounded-xl border border-background-300">
-                  <img src={imageUrl} alt="Preview" className="w-20 h-20 object-cover rounded-lg" />
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-dark-800">Photo attached</div>
-                    <div className="text-xs text-dark-400">Will be shared with your manager</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setImageUrl(undefined);
-                      if (fileRef.current) fileRef.current.value = '';
-                    }}
-                    className="p-2 rounded-lg hover:bg-error-light text-error"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => fileRef.current?.click()}
-                  className="w-full border-2 border-dashed border-background-300 rounded-xl p-6 text-center hover:border-primary transition-colors"
-                >
-                  <Upload size={28} className="text-dark-300 mx-auto mb-2" />
-                  <p className="text-sm text-dark-600">Click to upload a photo of the issue</p>
-                  <p className="text-xs text-dark-400 mt-1">JPEG or PNG, up to 1 MB</p>
-                </button>
-              )}
-            </div>
-
             {error && <p className="text-sm text-error">{error}</p>}
 
-            <button type="submit" className="w-full btn-primary py-3">
-              Submit Complaint
+            <button type="submit" disabled={busy} className="w-full btn-primary py-3">
+              {busy ? 'Submitting…' : 'Submit Complaint'}
             </button>
           </form>
         </div>
@@ -232,9 +168,6 @@ export default function TenantComplaintsPage() {
                     <ComplaintStatusBadge status={complaint.status} />
                   </div>
                   <p className="text-dark-600 text-sm mb-3">{complaint.description}</p>
-                  {complaint.imageUrl && (
-                    <img src={complaint.imageUrl} alt="Complaint" className="rounded-lg max-h-40 object-cover mb-3 border border-background-300" />
-                  )}
                   {complaint.remarks && (
                     <div className="p-3 rounded-lg bg-success-light text-success text-sm">
                       <strong>Update from manager:</strong> {complaint.remarks}
@@ -247,7 +180,7 @@ export default function TenantComplaintsPage() {
           ) : (
             <div className="text-center py-12">
               <div className="inline-block p-4 rounded-full bg-primary-50 text-primary mb-3">
-                <ImageIcon size={32} />
+                <MessageSquare size={32} />
               </div>
               <p className="text-dark-500">No complaints submitted yet. Everything working fine?</p>
             </div>

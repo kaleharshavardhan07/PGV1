@@ -5,19 +5,16 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
-  Wallet,
   Zap,
   MessageSquare,
   Users,
   BedDouble,
-  CreditCard,
   Info,
   CheckCheck,
   ListChecks,
   Smartphone,
   Mail,
   Globe,
-  UserPlus,
 } from 'lucide-react';
 import AppLayout from '../components/AppLayout';
 import { useAppStore } from '../store/appStore';
@@ -26,24 +23,18 @@ import type { NotificationCategory, NotificationChannel } from '../types';
 
 const CATEGORIES: Array<NotificationCategory | 'All'> = [
   'All',
-  'Rent',
   'Electricity',
   'Complaint',
-  'Admission',
   'Tenant',
   'Bed',
-  'Subscription',
   'System',
 ];
 
 const categoryIcon: Record<NotificationCategory, React.FC<{ size?: number }>> = {
-  Rent: Wallet,
   Electricity: Zap,
   Complaint: MessageSquare,
   Tenant: Users,
   Bed: BedDouble,
-  Subscription: CreditCard,
-  Admission: UserPlus,
   System: Info,
 };
 
@@ -59,15 +50,13 @@ const statusStyle: Record<string, string> = {
   Simulated: 'bg-primary-50 text-primary',
   Retried: 'bg-warning-light text-warning',
   Failed: 'bg-error-light text-error',
-  Skipped: 'bg-gray-100 text-dark-400',
+  Skipped: 'bg-dark-100 text-dark-400',
 };
 
 export default function NotificationsPage() {
   const { data, markNotificationRead, markAllNotificationsRead } = useAppStore();
   const navigate = useNavigate();
   const role = data.activeRole ?? 'tenant';
-  const userId = role === 'tenant' ? data.activeTenantId : 'all';
-  const tenantUserId = data.activeTenantUserId;
 
   const [tab, setTab] = useState<'notifications' | 'log'>('notifications');
   const [category, setCategory] = useState<NotificationCategory | 'All'>('All');
@@ -75,29 +64,20 @@ export default function NotificationsPage() {
   const notifications = useMemo(
     () =>
       data.notifications
-        .filter(
-          (n) =>
-            n.userRole === role &&
-            (n.userId === userId || (role === 'tenant' && n.userId === tenantUserId) || n.userId === 'all')
-        )
+        // The API already returns only what this user may see.
         .filter((n) => category === 'All' || n.category === category)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [data.notifications, role, userId, tenantUserId, category]
+    [data.notifications, category]
   );
 
   const unread = notifications.filter((n) => !n.read).length;
 
   const log = useMemo(
     () =>
-      (role === 'tenant'
-        ? data.notificationLog.filter(
-            (l) => l.recipientRole === 'tenant' && (l.recipient === userId || l.recipient === tenantUserId)
-          )
-        : data.notificationLog
-      )
+      data.notificationLog
         .filter((l) => category === 'All' || l.category === category)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [data.notificationLog, role, userId, tenantUserId, category]
+    [data.notificationLog, category]
   );
 
   const openNotification = (id: string, link?: string) => {
@@ -134,7 +114,7 @@ export default function NotificationsPage() {
           </div>
           {tab === 'notifications' && unread > 0 && (
             <button
-              onClick={() => markAllNotificationsRead(userId, role)}
+              onClick={() => markAllNotificationsRead()}
               className="btn-secondary text-sm"
             >
               <CheckCheck size={16} /> Mark all as read
@@ -173,7 +153,7 @@ export default function NotificationsPage() {
               return (
                 <button
                   key={n.id}
-                  onClick={() => openNotification(n.id, n.link)}
+                  onClick={() => openNotification(n.id, n.link ?? undefined)}
                   className={`w-full text-left px-5 py-4 flex gap-4 hover:bg-background-100 transition-colors ${
                     !n.read ? 'bg-primary-50/40' : ''
                   }`}
@@ -278,7 +258,7 @@ export default function NotificationsPage() {
 
         {role === 'owner' && (
           <div className="text-xs text-dark-400">
-            Tip: configure reminder schedules, grace period, retry rules and tenant communication preferences in{' '}
+            Tip: configure complaint reminders, delivery channels and retry rules in{' '}
             <button onClick={() => navigate('/app/owner/settings')} className="text-primary hover:underline font-medium">
               Settings → Notifications
             </button>

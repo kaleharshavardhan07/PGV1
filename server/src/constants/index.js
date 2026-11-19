@@ -15,10 +15,6 @@ export const COMPLAINT_CATEGORIES = [
 
 export const COMPLAINT_STATUS = ['Submitted', 'Seen', 'In Progress', 'Resolved'];
 
-export const PAYMENT_METHODS = ['UPI', 'Card', 'Net Banking'];
-export const PAYMENT_STATUS = ['Paid', 'Pending', 'Overdue'];
-export const PAYMENT_TYPES = ['Rent', 'Electricity', 'Deposit'];
-
 export const MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner'];
 export const WEEK_DAYS = [
   'Monday',
@@ -30,36 +26,11 @@ export const WEEK_DAYS = [
   'Sunday',
 ];
 
-export const ADMISSION_STATUS = ['Pending', 'Approved', 'Rejected'];
-export const MEMBERSHIP_STATUS = ['Active', 'Ended', 'Deactivated'];
-export const REGISTRATION_STATUS = [
-  'Awaiting Payment',
-  'Payment Pending Verification',
-  'Payment Failed',
-  'Payment Verified',
-  'Username Confirmed',
-  'Active',
-];
-
-export const SUBSCRIPTION_STATUS = [
-  'Trial',
-  'Active',
-  'Payment Pending',
-  'Past Due',
-  'Suspended',
-  'Cancelled',
-  'Expired',
-];
-export const BILLING_CYCLES = ['monthly', 'annual'];
-
 export const NOTIFICATION_CATEGORIES = [
-  'Rent',
   'Electricity',
   'Complaint',
   'Tenant',
   'Bed',
-  'Subscription',
-  'Admission',
   'System',
 ];
 export const NOTIFICATION_CHANNELS = ['In-App', 'WhatsApp', 'SMS', 'Email'];
@@ -68,3 +39,14 @@ export const DELIVERY_STATUS = ['Delivered', 'Simulated', 'Failed', 'Retried', '
 export const PG_TYPES = ['Boys', 'Girls', 'Co-living', 'Other'];
 export const POLICE_VERIFICATION = ['Pending', 'Verified', 'Not Required'];
 export const TENANT_STATUS = ['Active', 'Notice Period', 'Left'];
+
+export const DOCUMENT_TYPES = ['ID Proof', 'Photograph', 'Rental Agreement', 'Police Verification', 'Other'];
+export const DOCUMENT_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+// Allowed upload types, with the leading file signature used to confirm the
+// declared MIME type really matches the bytes.
+export const DOCUMENT_MIME_TYPES = {
+  'application/pdf': [0x25, 0x50, 0x44, 0x46],
+  'image/jpeg': [0xff, 0xd8, 0xff],
+  'image/png': [0x89, 0x50, 0x4e, 0x47],
+  'image/webp': [0x52, 0x49, 0x46, 0x46],
+};

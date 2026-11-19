@@ -1,14 +1,7 @@
-import { AuditLog } from '../models/index.js';
-import { nowISO } from '../utils/ids.js';
+import { recordAudit as insertAudit } from '../repositories/notifications.js';
+import logger from '../utils/logger.js';
 
-// Append an audit trail entry. Non-blocking (fire and forget).
-export const recordAudit = (actor, action, entity, entityId, details = '') => {
-  AuditLog.create({ ts: nowISO(), actor, action, entity, entityId, details }).catch(() => {});
-};
-
-export const listAuditLogs = ({ entity, entityId, limit = 100, skip = 0 } = {}) => {
-  const filter = {};
-  if (entity) filter.entity = entity;
-  if (entityId) filter.entityId = entityId;
-  return AuditLog.find(filter).sort({ ts: -1 }).skip(skip).limit(limit).lean();
+// Append an audit trail entry. Fire-and-forget: an audit failure must never fail the request.
+export const recordAudit = (pgId, actor, action, entity, entityId, details = '') => {
+  insertAudit(pgId, actor, action, entity, entityId, details).catch((err) => logger.error(`audit failed: ${err.message}`));
 };

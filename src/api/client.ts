@@ -69,10 +69,11 @@ async function request<T>(
     res = await fetch(`${API_BASE_URL}/api${path}`, {
       method,
       headers: {
-        'Content-Type': 'application/json',
+        // For FormData the browser sets the multipart boundary itself.
+        ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, 'Cannot reach the server. Is the API running?');
@@ -100,6 +101,7 @@ async function request<T>(
 export const api = {
   get: <T>(path: string, opts?: { auth?: boolean }) => request<T>('GET', path, undefined, opts),
   post: <T>(path: string, body?: unknown, opts?: { auth?: boolean }) => request<T>('POST', path, body ?? {}, opts),
+  upload: <T>(path: string, form: FormData) => request<T>('POST', path, form),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),
   del: <T>(path: string) => request<T>('DELETE', path),

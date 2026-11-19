@@ -1,179 +1,81 @@
 import ApiError from '../utils/apiError.js';
 import asyncHandler from '../utils/asyncHandler.js';
-import { Tenant, Room, Bed, Payment, Membership, Workspace } from '../models/index.js';
+import * as tenants from '../repositories/tenants.js';
+import * as accounts from '../repositories/accounts.js';
+import { hashPassword, generatePassword } from '../utils/password.js';
 import { runNotificationEngine } from '../services/notificationEngine.js';
 import { recordAudit } from '../services/auditService.js';
-import { nowISO, currentMonth } from '../utils/ids.js';
 
-const roomNumber = (rooms, id) => rooms.find((r) => String(r._id) === String(id))?.roomNumber ?? '-';
+const mustGet = async (pgId, id) => {
+  const tenant = await tenants.getTenant(pgId, id);
+  if (!tenant) throw ApiError.notFound('Tenant not found');
+  return tenant;
+};
 
 export const listTenants = asyncHandler(async (req, res) => {
-  const filter = { pg: req.pgId };
-  if (req.query.status) filter.status = req.query.status;
-  if (req.query.room) filter.room = req.query.room;
-  if (req.query.search) {
-    filter.$or = [
-      { fullName: new RegExp(req.query.search, 'i') },
-      { mobile: new RegExp(req.query.search, 'i') },
-    ];
-  }
-  const tenants = await Tenant.find(filter).sort({ createdAt: -1 });
-  const rooms = await Room.find({ pg: req.pgId });
-  const result = tenants.map((t) => ({ ...t.toJSON(), roomNumber: roomNumber(rooms, t.room) }));
-  res.json({ success: true, tenants: result });
+  const { status, room, search } = req.query;
+  res.json({ success: true, tenants: await tenants.listTenants({ pgId: req.pgId, status, roomId: room, search }) });
 });
 
 export const getTenant = asyncHandler(async (req, res) => {
-  const tenant = await Tenant.findOne({ _id: req.params.id, pg: req.pgId });
-  if (!tenant) throw ApiError.notFound('Tenant not found');
-  const room = await Room.findById(tenant.room);
-  res.json({ success: true, tenant: { ...tenant.toJSON(), roomNumber: room?.roomNumber } });
+  res.json({ success: true, tenant: await mustGet(req.pgId, req.params.id) });
 });
 
+// Owner/manager creates the tenant account. The temporary password is returned once
+// so it can be handed to the tenant; only its hash is stored.
 export const createTenant = asyncHandler(async (req, res) => {
-  const { room: roomId, bedNumber, monthlyRent, securityDeposit, joiningDate, ...rest } = req.body;
-
-  const room = await Room.findOne({ _id: roomId, pg: req.pgId });
-  if (!room) throw ApiError.badRequest('Room not found');
-
-  const bed = await Bed.findOne({ room: roomId, bedNumber, pg: req.pgId });
-  if (!bed) throw ApiError.badRequest('Selected bed does not exist');
-  if (bed.status === 'occupied') throw ApiError.badRequest('This bed is already occupied');
-
-  const tenant = await Tenant.create({
-    pg: req.pgId,
-    room: roomId,
-    bedNumber,
-    monthlyRent,
-    securityDeposit,
-    joiningDate,
-    ...rest,
-    status: 'Active',
+  const { password, ...data } = req.body;
+  const temporaryPassword = password ?? generatePassword();
+  const id = await tenants.createTenant(req.pgId, data, {
+    passwordHash: await hashPassword(temporaryPassword),
+    createdBy: req.user.id,
   });
-
-  await Bed.updateOne(
-    { _id: bed._id },
-    { $set: { status: 'occupied', tenant: tenant._id, vacantSince: undefined } }
-  );
-
-  // Deposit + current-month rent ledger entries.
-  const workspace = await Workspace.findOne({ pg: req.pgId }).lean();
-  const foodCharge = workspace?.settings?.foodCharge ?? 0;
-  const month = joiningDate.slice(0, 7);
-  const nowMonth = currentMonth();
-
-  const payments = [
-    {
-      pg: req.pgId,
-      tenant: tenant._id,
-      type: 'Deposit',
-      month,
-      amount: securityDeposit,
-      method: 'UPI',
-      status: securityDeposit > 0 ? 'Paid' : 'Pending',
-      paidAt: securityDeposit > 0 ? nowISO() : undefined,
-      dueDate: joiningDate,
-    },
-    {
-      pg: req.pgId,
-      tenant: tenant._id,
-      type: 'Rent',
-      month: nowMonth,
-      amount: monthlyRent + foodCharge,
-      method: 'UPI',
-      status: 'Pending',
-      dueDate: `${nowMonth}-05`,
-    },
-  ];
-  await Payment.insertMany(payments);
-
-  recordAudit(req.user.id, 'tenant.created', 'Tenant', tenant.id, `Added ${tenant.fullName} to Room ${room.roomNumber}`);
+  const tenant = await tenants.getTenant(req.pgId, id);
+  recordAudit(req.pgId, req.user.id, 'tenant.created', 'Tenant', id, `Created account for ${tenant.fullName} in Room ${tenant.roomNumber}`);
   await runNotificationEngine(req.pgId);
-
-  res.status(201).json({ success: true, tenant, payments });
+  res.status(201).json({ success: true, tenant, credentials: { mobile: tenant.mobile, password: temporaryPassword } });
 });
 
 export const updateTenant = asyncHandler(async (req, res) => {
-  const tenant = await Tenant.findOneAndUpdate({ _id: req.params.id, pg: req.pgId }, req.body, {
-    new: true,
-    runValidators: true,
-  });
+  const tenant = await tenants.updateTenant(req.pgId, req.params.id, req.body);
   if (!tenant) throw ApiError.notFound('Tenant not found');
-  recordAudit(req.user.id, 'tenant.updated', 'Tenant', tenant.id, 'Updated tenant');
-  await runNotificationEngine(req.pgId);
+  recordAudit(req.pgId, req.user.id, 'tenant.updated', 'Tenant', tenant.id, `Updated ${tenant.fullName}`);
   res.json({ success: true, tenant });
 });
 
+export const resetPassword = asyncHandler(async (req, res) => {
+  const tenant = await mustGet(req.pgId, req.params.id);
+  if (tenant.status === 'Left') throw ApiError.badRequest('This tenant has moved out and cannot sign in');
+  const password = req.body.password ?? generatePassword();
+  await accounts.setPassword('tenant', tenant.id, await hashPassword(password));
+  recordAudit(req.pgId, req.user.id, 'tenant.password_reset', 'Tenant', tenant.id, `Reset password for ${tenant.fullName}`);
+  res.json({ success: true, credentials: { mobile: tenant.mobile, password } });
+});
+
 export const deleteTenant = asyncHandler(async (req, res) => {
-  const tenant = await Tenant.findOneAndDelete({ _id: req.params.id, pg: req.pgId });
+  const tenant = await tenants.deleteTenant(req.pgId, req.params.id);
   if (!tenant) throw ApiError.notFound('Tenant not found');
-  await Bed.updateOne({ tenant: tenant._id }, { $set: { status: 'vacant', tenant: null, vacantSince: nowISO() } });
-  await Membership.updateMany({ tenant: tenant._id }, { $set: { status: 'Ended', leavingDate: nowISO().split('T')[0] } });
-  recordAudit(req.user.id, 'tenant.deleted', 'Tenant', tenant.id, `Deleted ${tenant.fullName}`);
+  recordAudit(req.pgId, req.user.id, 'tenant.deleted', 'Tenant', tenant.id, `Deleted ${tenant.fullName}`);
   res.json({ success: true, message: 'Tenant deleted' });
 });
 
 export const markNotice = asyncHandler(async (req, res) => {
-  const tenant = await Tenant.findOneAndUpdate(
-    { _id: req.params.id, pg: req.pgId },
-    { $set: { status: 'Notice Period', noticeDate: nowISO().split('T')[0] } },
-    { new: true }
-  );
-  if (!tenant) throw ApiError.notFound('Tenant not found');
-  recordAudit(req.user.id, 'tenant.notice', 'Tenant', tenant.id, `Marked ${tenant.fullName} on notice period`);
-  await runNotificationEngine(req.pgId);
+  const tenant = await tenants.markNotice(req.pgId, req.params.id);
+  if (!tenant) throw ApiError.badRequest('Only active tenants can be put on notice');
+  recordAudit(req.pgId, req.user.id, 'tenant.notice', 'Tenant', tenant.id, `Marked ${tenant.fullName} on notice period`);
   res.json({ success: true, tenant });
 });
 
 export const moveOut = asyncHandler(async (req, res) => {
-  const tenant = await Tenant.findOne({ _id: req.params.id, pg: req.pgId });
-  if (!tenant) throw ApiError.notFound('Tenant not found');
-
-  tenant.status = 'Left';
-  tenant.noticeDate = nowISO().split('T')[0];
-  await tenant.save();
-
-  await Bed.updateOne(
-    { tenant: tenant._id },
-    { $set: { status: 'vacant', tenant: null, vacantSince: nowISO() } }
-  );
-  await Membership.updateMany(
-    { tenant: tenant._id, status: 'Active' },
-    { $set: { status: 'Ended', leavingDate: nowISO().split('T')[0] } }
-  );
-
-  recordAudit(req.user.id, 'tenant.moveout', 'Tenant', tenant.id, `Moved out ${tenant.fullName}`);
-  await runNotificationEngine(req.pgId);
+  if (!(await tenants.moveOut(req.pgId, req.params.id))) throw ApiError.notFound('Tenant not found');
+  const tenant = await mustGet(req.pgId, req.params.id);
+  recordAudit(req.pgId, req.user.id, 'tenant.moveout', 'Tenant', tenant.id, `Moved out ${tenant.fullName}`);
   res.json({ success: true, tenant });
 });
 
 export const reallocateBed = asyncHandler(async (req, res) => {
-  const { room, bedNumber } = req.body;
-  const tenant = await Tenant.findOne({ _id: req.params.id, pg: req.pgId });
-  if (!tenant) throw ApiError.notFound('Tenant not found');
-
-  const bed = await Bed.findOne({ room, bedNumber, pg: req.pgId });
-  if (!bed) throw ApiError.badRequest('Selected bed does not exist');
-  if (bed.status === 'occupied' && String(bed.tenant) !== String(tenant._id)) {
-    throw ApiError.badRequest('This bed is already occupied');
-  }
-
-  // Free the old bed.
-  await Bed.updateOne({ tenant: tenant._id }, { $set: { status: 'vacant', tenant: null, vacantSince: nowISO() } });
-
-  tenant.room = room;
-  tenant.bedNumber = bedNumber;
-  await tenant.save();
-
-  await Bed.updateOne(
-    { _id: bed._id },
-    { $set: { status: 'occupied', tenant: tenant._id, vacantSince: undefined } }
-  );
-
-  await Membership.updateMany({ tenant: tenant._id, status: 'Active' }, { $set: { room, bed: bed._id } });
-
-  recordAudit(req.user.id, 'tenant.reallocate', 'Tenant', tenant.id, `Reallocated ${tenant.fullName} to bed ${bedNumber}`);
-  await runNotificationEngine(req.pgId);
+  await tenants.reallocate(req.pgId, req.params.id, req.body.bedId);
+  const tenant = await mustGet(req.pgId, req.params.id);
+  recordAudit(req.pgId, req.user.id, 'tenant.reallocate', 'Tenant', tenant.id, `Moved ${tenant.fullName} to Room ${tenant.roomNumber} bed ${tenant.bedNumber}`);
   res.json({ success: true, tenant });
 });
-

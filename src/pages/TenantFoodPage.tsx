@@ -37,10 +37,10 @@ export default function TenantFoodPage() {
 
   const toggleOptOut = (mealType: MealType) => {
     if (isOptedOut(mealType)) {
-      removeMealOptOut(tenant.id, selectedDate, mealType);
+      removeMealOptOut(selectedDate, mealType);
       toast.show(`${mealType} opt-out removed — meal restored.`, 'info');
     } else {
-      addMealOptOut(tenant.id, selectedDate, mealType);
+      addMealOptOut(selectedDate, mealType);
       toast.show(`${mealType} skipped for ${formatDate(selectedDate)}.`, 'info');
     }
   };
@@ -153,7 +153,7 @@ export default function TenantFoodPage() {
                         <button
                           key={star}
                           onClick={() => {
-                            rateMeal(tenant.id, selectedDate, mealType, star);
+                            rateMeal(selectedDate, mealType, star);
                             toast.show(`Thanks for rating ${mealType} ${star}/5!`, 'success');
                           }}
                           className="transition-transform hover:scale-110"
@@ -183,7 +183,7 @@ export default function TenantFoodPage() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary mt-0.5">•</span>
-              Food charges are {`₹${data.settings.foodCharge}`}/month and are included in your monthly rent total
+              Skipped meals help the kitchen plan better — thank you for letting us know.
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary mt-0.5">•</span>

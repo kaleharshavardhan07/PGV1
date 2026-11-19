@@ -1,96 +1,58 @@
 # Aapka PG — Backend API
 
-Node.js + Express + MongoDB REST API for **Aapka PG**, a PG & hostel management platform.
-It powers the existing React frontend with real authentication, a multi-PG SaaS
-registry, tenant/room/bed management, billing, complaints, food, notifications,
-and subscription billing.
+Node.js + Express + **PostgreSQL (Neon)** REST API for **Aapka PG**, a PG & hostel management app:
+rooms & beds, owner-created tenant accounts, tenant documents, electricity readings, complaints,
+food menu and notifications. Design: [`docs/LLD.md`](docs/LLD.md).
 
-## Tech stack
+## Stack
 
-- **Node.js 18+** (ES modules)
-- **Express 4** — routing & middleware
-- **MongoDB + Mongoose 8** — data layer
-- **JWT** (`jsonwebtoken`) — authentication
-- **bcryptjs** — password hashing
-- **Zod** — request validation
-- helmet, cors, morgan, dotenv
+Node 18+ (ESM) · Express 4 · `pg` (node-postgres) · JWT · bcryptjs · Zod · multer · helmet/cors/morgan
 
 ## Quick start
 
 ```bash
 cd server
 npm install
-cp .env.example .env     # then edit MONGO_URI / JWT_SECRET as needed
-npm run seed             # seed the demo PG, users and data
-npm run dev              # start the API (http://localhost:5000)
+cp .env.example .env     # set DATABASE_URL (Neon or local Postgres) and JWT_SECRET
+npm run seed             # creates tables (automatic) + demo data
+npm run dev              # http://localhost:5000  (macOS: port 5000 is used by AirPlay — set PORT=5001)
 ```
 
-To wipe and re-seed:
+`npm run seed:reset` wipes and reloads the demo data · `npm run migrate` only applies the schema.
+Health check: `GET /api/health`.
 
-```bash
-npm run seed:reset
-```
+## Database (Neon)
 
-Health check: `GET /api/health`
+Create a project at <https://neon.tech>, copy the **pooled** connection string into `DATABASE_URL`
+(keep `?sslmode=require`). Tables are created on start from `src/db/schema.sql`.
 
-## Demo credentials (after seeding)
+## Demo credentials (after seeding) — password `demo1234`
 
-| Role    | Login                                  | Password / OTP |
-|---------|----------------------------------------|----------------|
-| Owner   | username `shreeganesh_pg_4821`         | `demo1234`     |
-| Manager | `manager@shreeganeshpg.in`             | `demo1234`     |
-| Tenant  | mobile `9876500011` (Amit Kumar)       | OTP `1234`     |
+| Role | Login |
+|---|---|
+| Owner | `shreeganesh_pg_4821` (or `owner@shreeganeshpg.in`) |
+| Manager | `manager@shreeganeshpg.in` |
+| Tenant | mobile `9876500011` (Amit Kumar) |
 
-> All passwords are hashed with bcrypt. The tenant OTP is simulated (returned in
-> development responses, never stored). Nothing is stored in plain text.
+## Environment
 
-## Environment variables
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `5000` | HTTP port |
+| `DATABASE_URL` | local Postgres | Neon / Postgres connection string |
+| `DB_POOL_SIZE` | `10` | Max pooled connections |
+| `JWT_SECRET` | dev fallback | **Required in production** |
+| `JWT_EXPIRES_IN` | `7d` | Token lifetime |
+| `CORS_ORIGIN` | `http://localhost:5173` | Comma-separated allowed origins |
 
-| Variable      | Default                              | Description                          |
-|---------------|--------------------------------------|--------------------------------------|
-| `PORT`        | `5000`                               | HTTP port                            |
-| `MONGO_URI`   | `mongodb://127.0.0.1:27017/aapka_pg` | MongoDB connection string            |
-| `JWT_SECRET`  | dev-only fallback                    | JWT signing secret (set in prod!)    |
-| `JWT_EXPIRES_IN` | `7d`                              | Token lifetime                       |
-| `CORS_ORIGIN` | `http://localhost:5173`              | Comma-separated allowed origins      |
-| `DEMO_OTP`    | `1234`                               | Simulated tenant OTP                 |
-
-## API overview
-
-All routes are prefixed with `/api`. Auth uses a `Authorization: Bearer <token>` header.
-
-| Area | Routes |
-|------|--------|
-| Auth | `POST /auth/owner/register`, `/complete-payment`, `/activate`, `/login`, `/reset-password`, `POST /auth/tenant/register`, `/otp`, `/login`, `POST /auth/manager/login`, `GET /auth/me` |
-| Public | `GET /public/pgs`, `GET /public/pg/:username` |
-| Dashboard | `GET /dashboard/summary` |
-| Rooms & beds | `GET/POST /rooms`, `PATCH/DELETE /rooms/:id`, `GET /beds`, `PATCH /beds/:id`, `GET /vacancy` |
-| Tenants | `GET/POST /tenants`, `GET/PATCH/DELETE /tenants/:id`, `POST /tenants/:id/notice`, `/move-out`, `/reallocate` |
-| Admissions | `GET/POST /admissions`, `GET /admissions/me`, `PATCH /admissions/:id/approve`, `/reject` |
-| Payments | `GET /payments`, `POST /payments/:id/pay`, `POST /payments/remind`, `GET /payments/outstanding` |
-| Meter | `GET/POST /meter`, `POST /meter/publish` |
-| Complaints | `GET/POST /complaints`, `PATCH /complaints/:id/status` |
-| Food | `GET/POST /food/menu`, `GET /food/ratings`, `GET/POST /food/optout`, `DELETE /food/optout/:id`, `POST /food/rate` |
-| Notifications | `GET /notifications`, `PATCH /notifications/:id/read`, `PATCH /notifications/read-all`, `GET/PUT /notifications/prefs`, `POST /notifications/run`, `GET /notifications/log` |
-| Settings | `GET/PATCH /settings`, `GET/PUT /reminder-schedule` |
-| Subscription | `GET /subscription`, `POST /subscription/checkout`, `/upgrade`, `/cycle`, `/renew`, `/retry`, `/auto-renew` |
-
-Full design details live in [docs/LLD.md](./docs/LLD.md).
-
-## Project structure
+## Layout
 
 ```
-server/src
-├── app.js               # Express app
-├── server.js            # entry: connect DB + listen
-├── config/              # env + db
-├── constants/           # enums + plan catalogue
-├── middlewares/         # auth, role guard, pg context, validate, error
-├── models/              # Mongoose schemas
-├── controllers/         # route handlers
-├── routes/index.js      # API surface
-├── services/            # billing, notifications, delivery, payment, subscription
-├── validators/          # Zod schemas
-├── seed/                # demo data + seed script
-└── utils/               # logger, ids, ApiError, asyncHandler
+src/
+  db/            schema.sql, pool + query helpers, migrate
+  repositories/  SQL per aggregate (accounts, rooms, tenants, documents, operations, notifications)
+  controllers/   HTTP handlers          routes/  guards + validation per route
+  middlewares/   auth, validate, upload, errors
+  services/      notification engine, delivery, tokens, username rules
+  seed/          demo data
 ```

@@ -1,6 +1,6 @@
 // Username generation/validation (port of the frontend pgPlatform.ts).
 // Usernames are the public, globally-unique, case-insensitive identifier for a PG.
-import { PgAccount } from '../models/index.js';
+import { usernameExists, allUsernames } from '../repositories/accounts.js';
 
 export const USERNAME_PATTERN = /^[a-z0-9_]{4,30}$/;
 
@@ -26,15 +26,11 @@ export const slugifyPgName = (name) =>
     .slice(0, 24)
     .replace(/_+$/g, '');
 
-export const isUsernameTaken = async (raw) => {
-  const u = normalizeUsername(raw);
-  const found = await PgAccount.findOne({ pgUsername: u }).lean();
-  return Boolean(found);
-};
+export const isUsernameTaken = (raw) => usernameExists(normalizeUsername(raw));
 
 export const generateUsernameSuggestions = async (pgName, existing = [], count = 3) => {
   const base = slugifyPgName(pgName) || 'mypg';
-  const taken = new Set([...existing.map((u) => normalizeUsername(u)), ...(await PgAccount.distinct('pgUsername'))]);
+  const taken = new Set([...existing.map((u) => normalizeUsername(u)), ...(await allUsernames())]);
   const out = [];
   let suffix = 1;
   const candidates = [base, `${base}_01`, `${base}_${Math.floor(1000 + Math.random() * 9000)}`];
