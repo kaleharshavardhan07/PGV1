@@ -20,7 +20,15 @@ app.use(
       useDefaults: true,
       directives: {
         // Leaflet tiles + Nominatim geocoding for the location picker / Find PG map.
-        'img-src': ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org', 'https://*.tile.openstreetmap.org'],
+        'img-src': [
+          "'self'",
+          'data:',
+          'blob:',
+          'https://images.unsplash.com',
+          'https://plus.unsplash.com',
+          'https://tile.openstreetmap.org',
+          'https://*.tile.openstreetmap.org',
+        ],
         'connect-src': ["'self'", 'https://nominatim.openstreetmap.org'],
       },
     },
