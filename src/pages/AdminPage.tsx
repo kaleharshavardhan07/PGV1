@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Search, Building2, Users, BedDouble, Mail, MailX, ShieldCheck, ChevronDown } from 'lucide-react';
+import { Search, Building2, Users, BedDouble, Mail, MailX, ShieldCheck, ChevronDown, CheckCircle2, XCircle } from 'lucide-react';
 import AppLayout from '../components/AppLayout';
 import StatCard from '../components/StatCard';
 import EmptyState from '../components/EmptyState';
@@ -82,7 +82,7 @@ export default function AdminPage() {
                 <button className="w-full text-left px-5 py-4 flex items-center gap-4 hover:bg-dark-50" aria-expanded={open} onClick={() => setOpenId(open ? null : pg.id)}>
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold text-dark-900 flex flex-wrap items-center gap-2">{pg.pgName}
-                      <span className={`badge ${pg.isActive ? 'bg-success-light text-success' : 'bg-error-light text-error'}`}>{pg.isActive ? 'Active' : 'Suspended'}</span>
+                      <span className={`badge ${pg.approvalStatus === 'Approved' && pg.isActive ? 'bg-success-light text-success' : pg.approvalStatus === 'Pending' ? 'bg-warning-light text-warning' : 'bg-error-light text-error'}`}>{pg.approvalStatus === 'Pending' ? 'Awaiting approval' : pg.approvalStatus === 'Rejected' ? 'Rejected' : pg.isActive ? 'Approved' : 'Suspended'}</span>
                     </div>
                     <div className="text-xs text-dark-500 mt-0.5">@{pg.pgUsername} · {[pg.area, pg.city].filter(Boolean).join(', ')} · {pg.ownerName} ({pg.ownerEmail})</div>
                   </div>
@@ -109,10 +109,14 @@ export default function AdminPage() {
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-3 items-center">
-                      <button className={pg.isActive ? 'btn-secondary text-error' : 'btn-primary'} disabled={saving === pg.id}
+                      {pg.approvalStatus === 'Pending' && <><button className="btn-primary" disabled={saving === pg.id}
+                        onClick={() => update(pg, { approvalStatus: 'Approved' }, `${pg.pgName} approved and listed`)}><CheckCircle2 size={15} /> Approve PG</button>
+                        <button className="btn-secondary text-error" disabled={saving === pg.id}
+                          onClick={() => update(pg, { approvalStatus: 'Rejected' }, `${pg.pgName} rejected`)}><XCircle size={15} /> Reject</button></>}
+                      {pg.approvalStatus !== 'Pending' && <button className={pg.isActive ? 'btn-secondary text-error' : 'btn-primary'} disabled={saving === pg.id}
                         onClick={() => update(pg, { isActive: !pg.isActive }, pg.isActive ? `${pg.pgName} suspended` : `${pg.pgName} reactivated`)}>
                         {pg.isActive ? 'Suspend PG' : 'Reactivate PG'}
-                      </button>
+                      </button>}
                       <button className="btn-secondary" disabled={saving === pg.id}
                         onClick={() => update(pg, { isDiscoverable: !pg.isDiscoverable }, pg.isDiscoverable ? 'Hidden from Find PG' : 'Listed on Find PG')}>
                         {pg.isDiscoverable ? 'Hide from Find PG' : 'List on Find PG'}

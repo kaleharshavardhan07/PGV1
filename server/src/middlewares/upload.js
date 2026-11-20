@@ -25,3 +25,35 @@ export const uploadSingle = (req, res, next) => {
     return next(err);
   });
 };
+
+const photoUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: DOCUMENT_MAX_BYTES, files: 2 },
+  fileFilter: (_req, file, cb) => {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      return cb(ApiError.badRequest('PG photos must be JPG, PNG or WebP images.'));
+    }
+    cb(null, true);
+  },
+});
+
+export const uploadRegistrationPhotos = (req, res, next) => {
+  photoUploader.array('photos', 2)(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') return next(ApiError.badRequest('Each PG photo must be 5 MB or smaller.'));
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') return next(ApiError.badRequest('You can upload a maximum of 2 PG photos.'));
+    if (err.name === 'MulterError') return next(ApiError.badRequest(err.message));
+    return next(err);
+  });
+};
+
+export const parseOwnerRegistration = (req, _res, next) => {
+  if (!req.is('multipart/form-data')) return next();
+  try {
+    req.body.owner = JSON.parse(req.body.owner ?? '{}');
+    req.body.pg = JSON.parse(req.body.pg ?? '{}');
+    next();
+  } catch {
+    next(ApiError.badRequest('Invalid registration form data.'));
+  }
+};

@@ -3,6 +3,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { normalizeUsername } from '../services/pgPlatform.js';
 import * as rooms from '../repositories/rooms.js';
 import * as pubs from '../repositories/publicPgs.js';
+import * as photos from '../repositories/pgPhotos.js';
 import { mail } from '../services/mailService.js';
 import { insertNotification } from '../repositories/notifications.js';
 
@@ -18,6 +19,7 @@ const contactOf = (p) => ({
 const card = (p) => ({
   id: p.id, pgName: p.pgName, pgUsername: p.pgUsername, description: p.description, address: p.address, area: p.area,
   city: p.city, state: p.state, pgType: p.pgType, latitude: p.latitude, longitude: p.longitude,
+  photoIds: p.photoIds ?? [],
   distanceKm: p.distanceKm != null ? Math.round(p.distanceKm * 10) / 10 : null,
   vacancy: p.showAvailableBeds
     ? { totalBeds: p.totalBeds, vacantBeds: p.vacantBeds, minRent: p.minRent, maxRent: p.maxRent, sharingTypes: p.sharingTypes }
@@ -48,6 +50,7 @@ export const pgDetail = asyncHandler(async (req, res) => {
         beds: r.beds.map((b) => ({ id: b.id, bedNumber: b.bedNumber, label: b.label, rent: b.rent, status: b.status === 'vacant' ? 'vacant' : b.status === 'unavailable' ? 'unavailable' : 'occupied' })),
       };
     });
+
   }
   const counts = pg.showAvailableBeds ? await rooms.vacancyCounts(pg.id) : null;
   res.json({
@@ -55,6 +58,17 @@ export const pgDetail = asyncHandler(async (req, res) => {
     pg: { ...card({ ...pg, showAvailableBeds: false }), vacancy: counts && { totalBeds: counts.totalBeds, vacantBeds: counts.vacantBeds } },
     rooms: roomList,
   });
+});
+
+export const photo = asyncHandler(async (req, res) => {
+  const pg = await pubs.getPublicPg(normalizeUsername(req.params.username));
+  if (!pg) throw ApiError.notFound('PG not found');
+  const file = await photos.getPhoto(pg.id, req.params.id);
+  if (!file) throw ApiError.notFound('Photo not found');
+  res.setHeader('Content-Type', file.mimeType);
+  res.setHeader('Content-Length', file.size);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(file.data);
 });
 
 export const createEnquiry = asyncHandler(async (req, res) => {

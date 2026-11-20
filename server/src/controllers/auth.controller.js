@@ -7,6 +7,7 @@ import * as accounts from '../repositories/accounts.js';
 import * as tenants from '../repositories/tenants.js';
 import { recordAudit } from '../services/auditService.js';
 import { mail } from '../services/mailService.js';
+import { DOCUMENT_MIME_TYPES } from '../constants/index.js';
 
 const ownerUser = (pg) => ({
   id: pg.id,
@@ -33,11 +34,17 @@ export const ownerRegister = asyncHandler(async (req, res) => {
   const nameError = usernameError(pgUsername);
   if (nameError) throw ApiError.badRequest(nameError);
   const username = normalizeUsername(pgUsername);
+  for (const photo of req.files ?? []) {
+    const signature = DOCUMENT_MIME_TYPES[photo.mimetype];
+    if (!signature || !signature.every((byte, i) => photo.buffer[i] === byte)) {
+      throw ApiError.badRequest('One of the PG photos is not a valid image file.');
+    }
+  }
 
-  const account = await accounts.createOwner({ owner, pg, pgUsername: username, passwordHash: await hashPassword(password) });
+  const account = await accounts.createOwner({ owner, pg, pgUsername: username, passwordHash: await hashPassword(password), photos: req.files ?? [] });
   recordAudit(account.id, account.id, 'owner.registered', 'PgAccount', account.id, `Registered ${account.pgName}`);
-  mail.ownerWelcome(owner, account); // best effort, never blocks sign-up
-  res.status(201).json(ownerSession(account));
+  mail.ownerPending(owner, account); // best effort, never blocks sign-up
+  res.status(202).json({ success: true, pendingApproval: true, message: 'Your PG registration was submitted for admin approval.' });
 });
 
 export const ownerLogin = asyncHandler(async (req, res) => {
@@ -45,6 +52,8 @@ export const ownerLogin = asyncHandler(async (req, res) => {
   const pg = await accounts.findOwnerForLogin(identifier);
   // One message for both cases so the endpoint cannot be used to probe for accounts.
   if (!pg || !(await verifyPassword(password, pg.passwordHash))) throw ApiError.unauthorized('Incorrect username/email or password');
+  if (pg.approvalStatus === 'Pending') throw ApiError.forbidden('Your PG registration is awaiting admin approval.');
+  if (pg.approvalStatus === 'Rejected') throw ApiError.forbidden('Your PG registration was not approved. Please contact support.');
   if (!pg.isActive) throw ApiError.forbidden('This PG account is deactivated');
   res.json(ownerSession(pg));
 });

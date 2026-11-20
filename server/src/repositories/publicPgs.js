@@ -13,7 +13,7 @@ const DISTANCE = (latP, lngP) => `(6371 * acos(least(1, greatest(-1,
 export const searchPgs = async (f) => {
   const params = [];
   const p = (v) => { params.push(v); return `$${params.length}`; };
-  const where = ['p.is_active', 'p.is_discoverable'];
+  const where = ["p.is_active", "p.is_discoverable", "p.approval_status = 'Approved'"];
 
   if (f.q) {
     const like = p(`%${f.q}%`);
@@ -70,6 +70,7 @@ export const searchPgs = async (f) => {
             CASE WHEN p.show_available_beds THEN s.max_rent END AS max_rent,
             CASE WHEN p.show_available_beds THEN COALESCE(s.sharing_types, '{}') END AS sharing_types,
             ${distanceSql} AS distance_km,
+            COALESCE((SELECT array_agg(ph.id ORDER BY ph.sort_order, ph.created_at) FROM pg_photos ph WHERE ph.pg_id = p.id), '{}') AS photo_ids,
             count(*) OVER () AS total_count
        FROM pg_accounts p LEFT JOIN stats s ON s.pg_id = p.id
       WHERE ${where.join(' AND ')}
@@ -91,8 +92,9 @@ export const listLocations = () =>
 export const getPublicPg = (username) =>
   one(
     `SELECT id, pg_name, pg_username, description, address, area, city, state, pin_code, pg_type, latitude, longitude,
-            show_available_beds, contact_public, owner_name, owner_mobile, owner_email
-       FROM pg_accounts WHERE pg_username = $1 AND is_active AND is_discoverable`,
+            show_available_beds, contact_public, owner_name, owner_mobile, owner_email,
+            COALESCE((SELECT array_agg(ph.id ORDER BY ph.sort_order, ph.created_at) FROM pg_photos ph WHERE ph.pg_id = pg_accounts.id), '{}') AS photo_ids
+       FROM pg_accounts WHERE pg_username = $1 AND is_active AND is_discoverable AND approval_status = 'Approved'`,
     [username]
   );
 

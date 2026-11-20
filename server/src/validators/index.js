@@ -258,6 +258,7 @@ export const adminPgUpdateSchema = z.object({
   featuresAllowed: z.object(Object.fromEntries(FEATURES.map((f) => [f, z.boolean().optional()]))).optional(),
   isActive: z.boolean().optional(),
   isDiscoverable: z.boolean().optional(),
+  approvalStatus: z.enum(['Pending', 'Approved', 'Rejected']).optional(),
 });
 
 // ---------- Find PG (public) ----------

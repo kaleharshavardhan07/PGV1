@@ -244,7 +244,14 @@ const actions = {
   managerLogin: (email: string, password: string) => login(() => ep.authApi.managerLogin(email.trim(), password)),
   tenantLogin: (mobile: string, password: string) => login(() => ep.authApi.tenantLogin(mobile.trim(), password)),
   adminLogin: (email: string, password: string) => login(() => ep.authApi.adminLogin(email.trim(), password)),
-  ownerRegister: (payload: Record<string, unknown>) => login(() => ep.authApi.ownerRegister(payload)),
+  ownerRegister: async (payload: unknown): Promise<Result<{ pendingApproval: boolean; message: string }>> => {
+    try {
+      const response = await ep.authApi.ownerRegister(payload);
+      return { ok: true, pendingApproval: response.pendingApproval, message: response.message };
+    } catch (err) {
+      return { ok: false, error: errorMessage(err) };
+    }
+  },
   changePassword: async (current: string, next: string): Promise<Result> => {
     try {
       await ep.authApi.changePassword(current, next);

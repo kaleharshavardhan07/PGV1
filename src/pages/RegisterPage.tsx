@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { ShieldCheck } from 'lucide-react';
 import AuthShell from '../components/AuthShell';
 import { useAppStore } from '../store/appStore';
 import { authApi } from '../api/endpoints';
@@ -24,6 +25,8 @@ export default function RegisterPage() {
   const [errors, setErrors] = useState<Partial<Record<string, string>>>({});
   const [formError, setFormError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [submitted, setSubmitted] = useState(false);
   const [username, setUsername] = useState<{ state: 'idle' | 'checking' | 'ok' | 'bad'; message?: string; suggestions?: string[] }>({ state: 'idle' });
   const [usernameTouched, setUsernameTouched] = useState(false);
   // Until the owner edits it, the username is suggested from the PG name.
@@ -75,19 +78,21 @@ export default function RegisterPage() {
     setErrors({ ...e, ...le });
     setFormError('');
     if (Object.keys(e).length || Object.keys(le).length) return;
+    if (photos.length > 2) return setFormError('Choose a maximum of 2 PG photos.');
     setBusy(true);
-    const res = await ownerRegister({
-      owner: { fullName: form.fullName.trim(), mobile: form.mobile, email: form.email.trim() },
-      pg: {
+    const body = new FormData();
+    body.append('owner', JSON.stringify({ fullName: form.fullName.trim(), mobile: form.mobile, email: form.email.trim() }));
+    body.append('pg', JSON.stringify({
         pgName: form.pgName.trim(), pgType: form.pgType, address: loc.address.trim(), area: loc.area.trim(), city: loc.city.trim(), state: loc.state.trim(), pinCode: loc.pinCode.trim(),
         ...(loc.latitude != null && loc.longitude != null ? { latitude: loc.latitude, longitude: loc.longitude } : {}),
-      },
-      pgUsername: usernameValue.trim().toLowerCase(),
-      password: form.password,
-    });
+      }));
+    body.append('pgUsername', usernameValue.trim().toLowerCase());
+    body.append('password', form.password);
+    photos.forEach((photo) => body.append('photos', photo));
+    const res = await ownerRegister(body);
     setBusy(false);
     if (!res.ok) return setFormError(res.error);
-    navigate('/app/owner', { replace: true });
+    setSubmitted(true);
   };
 
   const input = (k: keyof Form, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
@@ -99,8 +104,15 @@ export default function RegisterPage() {
   );
 
   return (
-    <AuthShell wide title="Register your PG" subtitle="Create your owner account and start adding rooms, beds and tenants.">
-      <form onSubmit={submit} className="space-y-7" noValidate>
+    <AuthShell wide title={submitted ? 'Registration submitted' : 'Register your PG'} subtitle={submitted ? 'Your PG will be visible after an admin approves it.' : 'Create your owner account and start adding rooms, beds and tenants.'}>
+      {submitted ? (
+        <div className="py-8 text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#e6f2ec] text-[#1f6b55]"><ShieldCheck size={30} /></div>
+          <h2 className="mt-5 text-2xl font-bold text-[#20251f]">Thanks for registering!</h2>
+          <p className="mx-auto mt-3 max-w-md leading-7 text-[#687066]">An admin will review your PG details and photos. Once approved, you can log in and manage your PG.</p>
+          <Link to="/app/login" className="mt-7 inline-flex rounded-full bg-[#1f6b55] px-6 py-3 text-sm font-bold text-white">Go to login</Link>
+        </div>
+      ) : <form onSubmit={submit} className="space-y-7" noValidate>
         <fieldset className="grid sm:grid-cols-2 gap-4">
           <legend className="text-xs font-semibold text-dark-400 uppercase tracking-wide mb-3">About you</legend>
           <div className="sm:col-span-2">{input('fullName', 'Full name', { autoComplete: 'name' })}</div>
@@ -124,6 +136,21 @@ export default function RegisterPage() {
           <LocationPicker value={loc} onChange={setLoc} errors={{ address: errors.address as string | undefined, city: errors.city as string | undefined }} />
         </fieldset>
 
+        <fieldset>
+          <legend className="mb-3 text-xs font-semibold uppercase tracking-wide text-dark-400">PG photos <span className="font-normal normal-case">(optional, max 2)</span></legend>
+          <label htmlFor="pg-photos" className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-dashed border-[#cfd8d0] bg-[#f7fbf8] px-4 py-4 transition hover:border-[#1f6b55]">
+            <div><p className="text-sm font-semibold text-[#334238]">Add photos of your PG</p><p className="mt-1 text-xs text-[#687066]">JPG, PNG or WebP · up to 5 MB each</p></div>
+            <span className="rounded-full bg-white px-4 py-2 text-xs font-bold text-[#1f6b55] shadow-sm">Choose files</span>
+            <input id="pg-photos" type="file" accept="image/jpeg,image/png,image/webp" multiple className="sr-only" onChange={(e) => {
+              const next = Array.from(e.target.files ?? []);
+              if (next.length > 2) { setFormError('Choose a maximum of 2 PG photos.'); setPhotos(next.slice(0, 2)); return; }
+              if (next.some((file) => file.size > 5 * 1024 * 1024)) { setFormError('Each PG photo must be 5 MB or smaller.'); return; }
+              setFormError(''); setPhotos(next);
+            }} />
+          </label>
+          {photos.length > 0 && <div className="mt-3 grid grid-cols-2 gap-3">{photos.map((photo) => <div key={`${photo.name}-${photo.lastModified}`} className="flex items-center gap-2 rounded-lg bg-dark-50 px-3 py-2 text-xs text-dark-600"><span className="truncate">{photo.name}</span></div>)}</div>}
+        </fieldset>
+
         <fieldset className="grid sm:grid-cols-2 gap-4">
           <legend className="text-xs font-semibold text-dark-400 uppercase tracking-wide mb-3">Your login</legend>
           <div>
@@ -145,7 +172,7 @@ export default function RegisterPage() {
         {formError && <p role="alert" className="text-sm text-error bg-error-light rounded-lg px-3 py-2">{formError}</p>}
         <button className="btn-primary w-full !py-3" disabled={busy}>{busy ? 'Creating your account…' : 'Create account'}</button>
         <p className="text-sm text-dark-500 text-center">Already registered? <Link to="/app/login" className="text-primary font-medium hover:underline">Log in</Link></p>
-      </form>
+      </form>}
     </AuthShell>
   );
 }

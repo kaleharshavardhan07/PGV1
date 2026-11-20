@@ -10,6 +10,10 @@ export interface AuthResponse {
   token: string;
   user: { id: string; role: 'owner' | 'manager' | 'tenant' | 'admin'; pgId: string | null; [k: string]: unknown };
 }
+export interface OwnerRegistrationResponse {
+  pendingApproval: boolean;
+  message: string;
+}
 
 export interface Credentials {
   mobile?: string;
@@ -42,6 +46,7 @@ export interface PgCard {
   distanceKm: number | null;
   vacancy: { totalBeds: number; vacantBeds: number; minRent: number | null; maxRent: number | null; sharingTypes: number[] } | null;
   contact: { ownerName: string; phone: string | null; whatsapp: string | null };
+  photoIds: string[];
 }
 
 export interface PgSearchParams {
@@ -66,7 +71,7 @@ const qs = (params: object) => {
 
 // ---------- Auth ----------
 export const authApi = {
-  ownerRegister: (body: Record<string, unknown>) => api.post<AuthResponse>('/auth/owner/register', body, { auth: false }),
+  ownerRegister: (body: unknown) => api.post<OwnerRegistrationResponse>('/auth/owner/register', body, { auth: false }),
   ownerLogin: (identifier: string, password: string) => api.post<AuthResponse>('/auth/owner/login', { identifier, password }, { auth: false }),
   managerLogin: (email: string, password: string) => api.post<AuthResponse>('/auth/manager/login', { email, password }, { auth: false }),
   tenantLogin: (mobile: string, password: string) => api.post<AuthResponse>('/auth/tenant/login', { mobile, password }, { auth: false }),
@@ -88,7 +93,7 @@ export const publicApi = {
 // ---------- Platform admin ----------
 export interface AdminPg {
   id: string; pgName: string; pgUsername: string; city: string; area: string; pgType: string; ownerName: string; ownerEmail: string;
-  ownerMobile: string; isActive: boolean; isDiscoverable: boolean; rooms: number; beds: number; tenants: number; managers: number;
+  ownerMobile: string; isActive: boolean; isDiscoverable: boolean; approvalStatus: 'Pending' | 'Approved' | 'Rejected'; rooms: number; beds: number; tenants: number; managers: number;
   createdAt: string; featuresAllowed: FeatureMap; featuresEnabled: FeatureMap; effectiveFeatures: FeatureMap;
 }
 export const adminApi = {

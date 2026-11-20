@@ -20,7 +20,7 @@ import { requirePg } from '../middlewares/context.js';
 import { requireFeature, staffGuard, ownerGuard, memberGuard, adminGuard } from '../middlewares/access.js';
 import { rateLimit } from '../middlewares/rateLimit.js';
 import { validate } from '../middlewares/validate.js';
-import { uploadSingle } from '../middlewares/upload.js';
+import { uploadSingle, uploadRegistrationPhotos, parseOwnerRegistration } from '../middlewares/upload.js';
 import * as v from '../validators/index.js';
 
 const router = Router();
@@ -42,7 +42,7 @@ const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: 'To
 const enquiryLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, message: 'Too many enquiries from this network. Please try again later.' });
 
 // ---------- Auth ----------
-router.post('/auth/owner/register', loginLimiter, validate({ body: v.ownerRegisterSchema }), auth.ownerRegister);
+router.post('/auth/owner/register', loginLimiter, uploadRegistrationPhotos, parseOwnerRegistration, validate({ body: v.ownerRegisterSchema }), auth.ownerRegister);
 router.post('/auth/owner/login', loginLimiter, validate({ body: v.ownerLoginSchema }), auth.ownerLogin);
 router.get('/auth/owner/username-available', auth.usernameAvailable);
 router.post('/auth/manager/login', loginLimiter, validate({ body: v.managerLoginSchema }), auth.managerLogin);
@@ -61,6 +61,7 @@ router.patch('/admin/pgs/:id', ...adminGuard, validate({ params: id, body: v.adm
 router.get('/public/pgs', validate({ query: v.pgSearchSchema }), publicCtl.searchPgs);
 router.get('/public/locations', publicCtl.locations);
 router.get('/public/pg/:username', publicCtl.pgDetail);
+router.get('/public/pg/:username/photos/:id', publicCtl.photo);
 router.post('/public/pg/:username/enquiries', enquiryLimiter, validate({ body: v.enquirySchema }), publicCtl.createEnquiry);
 
 // ---------- Dashboard ----------

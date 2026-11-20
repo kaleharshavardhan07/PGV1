@@ -2,16 +2,16 @@ import { query, one, transaction } from '../db/index.js';
 import { normaliseFeatureMap, normalisePermissions, resolveFeatures } from '../services/access.js';
 
 const OWNER_COLUMNS = `id, pg_name, pg_username, description, address, area, city, state, pin_code, latitude, longitude, pg_type,
-  owner_name, owner_email, owner_mobile, is_active, is_discoverable, show_available_beds, contact_public,
+  owner_name, owner_email, owner_mobile, is_active, is_discoverable, approval_status, show_available_beds, contact_public,
   features_allowed, features_enabled, created_at, updated_at`;
 
 export const getOwner = (id) => one(`SELECT ${OWNER_COLUMNS} FROM pg_accounts WHERE id = $1`, [id]);
 
 /** PG-level flags every principal needs: is it active, and which modules are usable. */
 export const getPgAccess = async (pgId) => {
-  const row = await one('SELECT is_active, features_allowed, features_enabled FROM pg_accounts WHERE id = $1', [pgId]);
+  const row = await one('SELECT is_active, approval_status, features_allowed, features_enabled FROM pg_accounts WHERE id = $1', [pgId]);
   if (!row) return null;
-  return { isActive: row.isActive, features: resolveFeatures(row.featuresAllowed, row.featuresEnabled) };
+  return { isActive: row.isActive, approvalStatus: row.approvalStatus, features: resolveFeatures(row.featuresAllowed, row.featuresEnabled) };
 };
 
 export const featureState = (row) => ({
@@ -35,13 +35,13 @@ export const usernameExists = async (username) =>
 export const allUsernames = async () => (await query('SELECT pg_username FROM pg_accounts')).map((r) => r.pgUsername);
 
 /** Create the PG account and its settings row atomically. */
-export const createOwner = ({ owner, pg, pgUsername, passwordHash }) =>
+export const createOwner = ({ owner, pg, pgUsername, passwordHash, photos = [] }) =>
   transaction(async (tx) => {
     const account = await one(
       `INSERT INTO pg_accounts
          (pg_name, pg_username, description, address, area, city, state, pin_code, latitude, longitude, pg_type,
-          owner_name, owner_email, owner_mobile, password_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          owner_name, owner_email, owner_mobile, password_hash, is_active, is_discoverable, approval_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,false,false,'Pending')
        RETURNING ${OWNER_COLUMNS}`,
       [
         pg.pgName, pgUsername, pg.description ?? '', pg.address, pg.area ?? '', pg.city, pg.state ?? '', pg.pinCode ?? '',
@@ -50,6 +50,14 @@ export const createOwner = ({ owner, pg, pgUsername, passwordHash }) =>
       ],
       tx
     );
+    for (const [index, photo] of photos.entries()) {
+      await query(
+        `INSERT INTO pg_photos (pg_id, file_name, mime_type, size, sort_order, data)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [account.id, photo.originalname, photo.mimetype, photo.size, index, photo.buffer],
+        tx
+      );
+    }
     await query(
       `INSERT INTO workspace_settings (pg_id, name, address, city, contact_email, contact_phone, owner_name)
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
@@ -188,7 +196,7 @@ export const adminListPgs = ({ search } = {}) => {
   if (search) { params.push(`%${search}%`); where = `WHERE p.pg_name ILIKE $1 OR p.owner_name ILIKE $1 OR p.city ILIKE $1 OR p.pg_username ILIKE $1 OR p.owner_email ILIKE $1`; }
   return query(
     `SELECT p.id, p.pg_name, p.pg_username, p.city, p.area, p.pg_type, p.owner_name, p.owner_email, p.owner_mobile,
-            p.is_active, p.is_discoverable, p.features_allowed, p.features_enabled, p.created_at,
+            p.is_active, p.is_discoverable, p.approval_status, p.features_allowed, p.features_enabled, p.created_at,
             (SELECT count(*) FROM rooms r WHERE r.pg_id = p.id) AS rooms,
             (SELECT count(*) FROM beds b WHERE b.pg_id = p.id) AS beds,
             (SELECT count(*) FROM tenants t WHERE t.pg_id = p.id AND t.status <> 'Left') AS tenants,
@@ -209,7 +217,7 @@ export const adminOverview = () =>
             (SELECT count(*) FROM enquiries WHERE status = 'New') AS new_enquiries`
   );
 
-export const adminUpdatePg = async (id, { featuresAllowed, isActive, isDiscoverable }) => {
+export const adminUpdatePg = async (id, { featuresAllowed, isActive, isDiscoverable, approvalStatus }) => {
   const sets = ['updated_at = now()'];
   const params = [id];
   const add = (col, val) => { params.push(val); sets.push(`${col} = $${params.length}`); };
@@ -220,6 +228,16 @@ export const adminUpdatePg = async (id, { featuresAllowed, isActive, isDiscovera
   }
   if (isActive !== undefined) add('is_active', isActive);
   if (isDiscoverable !== undefined) add('is_discoverable', isDiscoverable);
+  if (approvalStatus !== undefined) {
+    add('approval_status', approvalStatus);
+    if (approvalStatus === 'Approved') {
+      add('is_active', true);
+      add('is_discoverable', true);
+    } else if (approvalStatus === 'Rejected') {
+      add('is_active', false);
+      add('is_discoverable', false);
+    }
+  }
   const row = await one(`UPDATE pg_accounts SET ${sets.join(', ')} WHERE id = $1 RETURNING id`, params);
   return row ? getOwner(id) : null;
 };

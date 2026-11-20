@@ -8,7 +8,7 @@ import Modal from '../components/Modal';
 import EmptyState from '../components/EmptyState';
 import { Skeleton } from '../components/PageLoader';
 import { publicApi, type PgDetail } from '../api/endpoints';
-import { errorMessage } from '../api/client';
+import { API_BASE_URL, errorMessage } from '../api/client';
 import { formatINR } from '../utils/format';
 
 const SHARING_NAME: Record<number, string> = { 1: 'Single', 2: 'Double', 3: 'Triple', 4: 'Quad' };
@@ -62,6 +62,9 @@ export default function PgDetailPage() {
 
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
+            {pg.photoIds.length > 0 && <section className="grid grid-cols-2 gap-3 overflow-hidden rounded-2xl">
+              {pg.photoIds.map((id, index) => <img key={id} src={`${API_BASE_URL}/api/public/pg/${pg.pgUsername}/photos/${id}`} alt={`${pg.pgName} photo ${index + 1}`} className={`h-56 w-full object-cover ${index === 0 && pg.photoIds.length === 1 ? 'col-span-2' : ''}`} />)}
+            </section>}
             {pg.description && <section className="card p-6"><h2 className="font-semibold text-dark-900 mb-2">About this PG</h2><p className="text-sm text-dark-600 leading-relaxed whitespace-pre-line">{pg.description}</p></section>}
 
             <section className="card p-6" aria-label="Rent packages">

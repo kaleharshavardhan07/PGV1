@@ -56,6 +56,14 @@ export async function sendMail({ to, subject, text, html }) {
 const appUrl = (path = '') => `${env.publicAppUrl}${path}`;
 
 export const mail = {
+  ownerPending: (owner, pg) =>
+    sendMail({
+      to: owner.email,
+      subject: `Your Aapka PG registration is under review`,
+      text: `Hi ${owner.fullName},\n\nYour PG "${pg.pgName}" has been submitted for admin approval. We will let you know when it is ready to use.\n\nYou can then log in at ${appUrl('/app/login')} with your PG username "${pg.pgUsername}".`,
+      html: layout('Registration under review', `<p>Hi ${esc(owner.fullName)},</p><p><strong>${esc(pg.pgName)}</strong> has been submitted for admin approval.</p><p>We will let you know when it is ready to use. You can then <a href="${esc(appUrl('/app/login'))}" style="color:#4f46e5">open your dashboard</a>.</p>`),
+    }),
+
   ownerWelcome: (owner, pg) =>
     sendMail({
       to: owner.email,

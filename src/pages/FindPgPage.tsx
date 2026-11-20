@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Search, LocateFixed, MapPin, BedDouble, Bath, Bookmark, BookmarkCheck, SlidersHorizontal, X, Phone } from 'lucide-react';
+import { Search, LocateFixed, MapPin, BedDouble, Bath, Bookmark, BookmarkCheck, SlidersHorizontal, X, Phone, Sparkles } from 'lucide-react';
 import PublicHeader from '../components/PublicHeader';
 import Modal from '../components/Modal';
 import ContactOwner from '../components/ContactOwner';
 import EmptyState from '../components/EmptyState';
 import { Skeleton } from '../components/PageLoader';
 import { publicApi, type PgCard, type PgSearchParams } from '../api/endpoints';
-import { errorMessage } from '../api/client';
+import { API_BASE_URL, errorMessage } from '../api/client';
 import { formatINR } from '../utils/format';
 
 const PAGE = 12;
@@ -15,6 +15,11 @@ const GENDERS = [{ v: '', l: 'Any' }, { v: 'Boys', l: 'Boys' }, { v: 'Girls', l:
 const PRICES = [{ l: 'Any price', min: '', max: '' }, { l: 'Under ₹6,000', min: '', max: '6000' }, { l: '₹6,000 – ₹9,000', min: '6000', max: '9000' }, { l: '₹9,000 – ₹13,000', min: '9000', max: '13000' }, { l: 'Above ₹13,000', min: '13000', max: '' }];
 const SHARING_NAME: Record<number, string> = { 1: 'Single', 2: 'Double', 3: 'Triple', 4: 'Quad' };
 const sharingName = (n: number) => SHARING_NAME[n] ?? `${n}-sharing`;
+const propertyImages = [
+  'https://images.unsplash.com/photo-1555854877-bab0e564b8d5?auto=format&fit=crop&w=900&q=85',
+  'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=900&q=85',
+  'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=900&q=85',
+];
 
 // Saved PGs live in this browser only: no account needed to browse.
 const SAVED_KEY = 'aapka-pg-saved';
@@ -112,41 +117,44 @@ export default function FindPgPage() {
   );
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-[#fffdf9] text-[#20251f]">
       <PublicHeader />
-      <section className="bg-white border-b border-dark-200">
-        <div className="max-w-6xl mx-auto px-5 py-8">
-          <h1 className="text-3xl font-bold text-dark-900 tracking-tight">Find a PG near you</h1>
-          <p className="text-dark-500 mt-1.5">Search by area, filter by price and sharing, and contact owners directly.</p>
+      <section className="border-b border-[#e9e5dc] bg-[#f7f5ef]">
+        <div className="mx-auto max-w-7xl px-5 py-12 lg:px-8 lg:py-16">
+          <div className="mb-7 max-w-2xl">
+            <span className="mb-4 inline-flex items-center gap-2 rounded-full bg-[#e6f2ec] px-3.5 py-2 text-xs font-bold uppercase tracking-[0.13em] text-[#1f6b55]"><Sparkles size={14} /> Find your next home</span>
+            <h1 className="text-4xl font-bold tracking-tight text-[#20251f] sm:text-5xl">Find a PG that feels <span className="font-serif font-medium italic text-[#d47745]">right.</span></h1>
+            <p className="mt-4 max-w-xl text-lg leading-7 text-[#687066]">Search verified stays by area, compare what matters, and contact owners directly.</p>
+          </div>
 
-          <form className="mt-6 flex flex-col sm:flex-row gap-2" onSubmit={(e) => { e.preventDefault(); set({ q: q.trim(), lat: '', lng: '', radius: '' }); }} role="search">
+          <form className="flex flex-col gap-2 rounded-2xl border border-[#e5e1d8] bg-white p-3 shadow-xl shadow-[#314f3f]/[0.06] sm:flex-row" onSubmit={(e) => { e.preventDefault(); set({ q: q.trim(), lat: '', lng: '', radius: '' }); }} role="search">
             <div className="relative flex-1">
-              <MapPin size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-dark-400" />
-              <input list="locations" className="input-field !pl-10 !py-3" placeholder="Search area, locality, city or PG name" aria-label="Search location" value={q} onChange={(e) => setQ(e.target.value)} />
+              <MapPin size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#1f6b55]" />
+              <input list="locations" className="input-field !border-0 !bg-transparent !pl-11 !py-3.5 !shadow-none" placeholder="Search area, locality, city or PG name" aria-label="Search location" value={q} onChange={(e) => setQ(e.target.value)} />
               <datalist id="locations">{[...new Set(locations.flatMap((l) => [l.city, l.area]).filter(Boolean))].map((x) => <option key={x} value={x} />)}</datalist>
             </div>
-            <button className="btn-primary !py-3 sm:px-6"><Search size={16} /> Search</button>
-            <button type="button" className="btn-secondary !py-3" onClick={locate}><LocateFixed size={16} /> Near me</button>
+            <button className="rounded-full bg-[#1f6b55] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#175541]"><Search size={16} className="mr-2 inline" />Search</button>
+            <button type="button" className="rounded-full border border-[#dedbd2] bg-white px-5 py-3 text-sm font-bold text-[#334238] transition hover:border-[#1f6b55]" onClick={locate}><LocateFixed size={16} className="mr-2 inline" />Near me</button>
           </form>
-          {geoNote && <p className="text-xs text-warning mt-2" role="status">{geoNote}</p>}
+          {geoNote && <p className="mt-2 text-xs text-warning" role="status">{geoNote}</p>}
 
           {(cities.length > 0 || areas.length > 0) && (
             <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-dark-500">Popular:</span>
+              <span className="text-[#687066]">Popular:</span>
               {[...cities.map(([c, n]) => ({ label: c, n, v: c })), ...areas.map((a) => ({ label: a.area, n: a.pgs, v: a.area }))].slice(0, 10).map((x) => (
                 <button key={x.label} onClick={() => { setQ(x.v); set({ q: x.v, lat: '', lng: '', radius: '' }); }} className="px-3 py-1 rounded-full border border-dark-200 bg-white hover:border-primary hover:text-primary-700 transition">{x.label} <span className="text-dark-400 text-xs">{x.n}</span></button>
               ))}
             </div>
           )}
 
-          <div className="mt-5 hidden lg:block">{filters}</div>
-          <button className="lg:hidden mt-4 btn-secondary w-full" onClick={() => setFiltersOpen(true)}><SlidersHorizontal size={16} /> Filters{activeCount ? ` (${activeCount})` : ''}</button>
+          <div className="mt-6 hidden rounded-2xl border border-[#e9e5dc] bg-white p-5 lg:block">{filters}</div>
+          <button className="mt-4 w-full rounded-full border border-[#dedbd2] bg-white py-3 text-sm font-bold text-[#334238] lg:hidden" onClick={() => setFiltersOpen(true)}><SlidersHorizontal size={16} className="mr-2 inline" />Filters{activeCount ? ` (${activeCount})` : ''}</button>
         </div>
       </section>
 
-      <main className="max-w-6xl mx-auto px-5 py-8">
+      <main className="mx-auto max-w-7xl px-5 py-10 lg:px-8 lg:py-14">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-          <div className="text-sm text-dark-600" role="status" aria-live="polite">{loading ? 'Searching…' : `${total} PG${total === 1 ? '' : 's'} found`}{get('q') && <> for “{get('q')}”</>}{get('lat') && <> near you</>}</div>
+          <div className="text-sm font-medium text-[#687066]" role="status" aria-live="polite">{loading ? 'Searching…' : `${total} PG${total === 1 ? '' : 's'} found`}{get('q') && <> for “{get('q')}”</>}{get('lat') && <> near you</>}</div>
           <div className="flex items-center gap-3">
             {saved.length > 0 && <label className="flex items-center gap-2 text-sm text-dark-600 cursor-pointer select-none"><input type="checkbox" className="rounded border-dark-300 text-primary" checked={onlySaved} onChange={(e) => setOnlySaved(e.target.checked)} /> Saved ({saved.length})</label>}
             {(activeCount > 0 || get('q')) && <button className="text-sm text-primary font-medium inline-flex items-center gap-1 hover:underline" onClick={clearAll}><X size={14} /> Clear filters</button>}
@@ -165,14 +173,19 @@ export default function FindPgPage() {
               {visible.map((p) => {
                 const isSaved = saved.includes(p.id);
                 return (
-                  <article key={p.id} className="card p-5 flex flex-col hover:shadow-glow transition" aria-label={p.pgName}>
+                  <article key={p.id} className="group flex flex-col overflow-hidden rounded-2xl border border-[#e9e5dc] bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl" aria-label={p.pgName}>
+                    <div className="relative overflow-hidden">
+                      <img src={p.photoIds[0] ? `${API_BASE_URL}/api/public/pg/${p.pgUsername}/photos/${p.photoIds[0]}` : propertyImages[visible.indexOf(p) % propertyImages.length]} alt="" className="h-44 w-full object-cover transition duration-500 group-hover:scale-105" />
+                      <span className="absolute left-4 top-4 rounded-full bg-white/95 px-3 py-1 text-xs font-bold text-[#334238]">Verified stay</span>
+                      <button onClick={() => toggleSave(p.id)} aria-pressed={isSaved} aria-label={isSaved ? `Unsave ${p.pgName}` : `Save ${p.pgName}`} className="absolute right-4 top-4 rounded-full bg-white/90 p-2 text-[#687066] hover:text-[#1f6b55]">{isSaved ? <BookmarkCheck size={18} className="text-[#1f6b55]" /> : <Bookmark size={18} />}</button>
+                    </div>
+                    <div className="flex flex-1 flex-col p-5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <span className={`badge ${p.pgType === 'Girls' ? 'bg-pink-50 text-pink-700' : p.pgType === 'Boys' ? 'bg-secondary-50 text-secondary-700' : 'bg-primary-50 text-primary-700'}`}>{p.pgType === 'Co-living' ? 'Co-ed' : p.pgType}</span>
                         <h2 className="font-semibold text-dark-900 text-lg mt-2 leading-snug truncate"><Link to={`/find-pg/${p.pgUsername}`} className="hover:text-primary-700">{p.pgName}</Link></h2>
                         <div className="text-sm text-dark-500 flex items-center gap-1 mt-0.5"><MapPin size={13} className="shrink-0" /><span className="truncate">{[p.area, p.city].filter(Boolean).join(', ')}</span>{p.distanceKm != null && <span className="text-dark-400 shrink-0">· {p.distanceKm} km</span>}</div>
                       </div>
-                      <button onClick={() => toggleSave(p.id)} aria-pressed={isSaved} aria-label={isSaved ? `Unsave ${p.pgName}` : `Save ${p.pgName}`} className="p-2 -mr-2 rounded-lg hover:bg-dark-100 text-dark-400 hover:text-primary shrink-0">{isSaved ? <BookmarkCheck size={19} className="text-primary" /> : <Bookmark size={19} />}</button>
                     </div>
 
                     {p.vacancy ? (
@@ -188,6 +201,7 @@ export default function FindPgPage() {
                     <div className="grid grid-cols-2 gap-2 mt-5 pt-4 border-t border-dark-100">
                       <Link to={`/find-pg/${p.pgUsername}`} className="btn-secondary !py-2">View details</Link>
                       <button className="btn-primary !py-2" onClick={() => setContact(p)}><Phone size={14} /> Contact owner</button>
+                    </div>
                     </div>
                   </article>
                 );

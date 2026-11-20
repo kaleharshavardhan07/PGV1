@@ -47,6 +47,7 @@ export const loadPrincipal = async (payload) => {
   // The PG itself may have been suspended by the platform admin.
   const access = await getPgAccess(pgId);
   if (!access?.isActive) throw ApiError.unauthorized('This PG account is deactivated');
+  if (access.approvalStatus !== 'Approved') throw ApiError.unauthorized('This PG registration is not approved');
 
   return {
     id: doc.id, role, pgId, doc, features: access.features,

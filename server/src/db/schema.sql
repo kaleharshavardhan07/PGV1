@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS pg_accounts (
   password_hash       text NOT NULL,
   is_active           boolean NOT NULL DEFAULT true,
   is_discoverable     boolean NOT NULL DEFAULT true,
+  approval_status     text NOT NULL DEFAULT 'Approved' CHECK (approval_status IN ('Pending','Approved','Rejected')),
   show_available_beds boolean NOT NULL DEFAULT true,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now()
@@ -267,11 +268,25 @@ ALTER TABLE pg_accounts
   ADD COLUMN IF NOT EXISTS latitude         double precision CHECK (latitude  BETWEEN -90  AND 90),
   ADD COLUMN IF NOT EXISTS longitude        double precision CHECK (longitude BETWEEN -180 AND 180),
   ADD COLUMN IF NOT EXISTS contact_public   boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS approval_status  text NOT NULL DEFAULT 'Approved' CHECK (approval_status IN ('Pending','Approved','Rejected')),
   -- features_allowed is set by the platform admin; features_enabled by the owner.
   -- A feature is usable only when both are true. Missing keys default to true.
   ADD COLUMN IF NOT EXISTS features_allowed jsonb NOT NULL DEFAULT '{}'::jsonb,
   ADD COLUMN IF NOT EXISTS features_enabled jsonb NOT NULL DEFAULT '{}'::jsonb;
 CREATE INDEX IF NOT EXISTS pg_accounts_city_idx ON pg_accounts (lower(city));
+
+CREATE TABLE IF NOT EXISTS pg_photos (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  pg_id       uuid NOT NULL REFERENCES pg_accounts(id) ON DELETE CASCADE,
+  file_name   text NOT NULL,
+  mime_type   text NOT NULL CHECK (mime_type IN ('image/jpeg','image/png','image/webp')),
+  size        integer NOT NULL CHECK (size > 0),
+  sort_order  integer NOT NULL DEFAULT 0 CHECK (sort_order BETWEEN 0 AND 1),
+  data        bytea NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (pg_id, sort_order)
+);
+CREATE INDEX IF NOT EXISTS pg_photos_pg_idx ON pg_photos(pg_id, sort_order);
 
 ALTER TABLE managers
   ADD COLUMN IF NOT EXISTS permissions jsonb   NOT NULL DEFAULT '{}'::jsonb,
